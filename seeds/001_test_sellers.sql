@@ -16,8 +16,8 @@ begin;
 
 insert into sellers (whatsapp_number, credit_balance, conversation_state)
 values
-  ('+5511999999999', 1000, 'novo'),  -- TROCAR: meu número
-  ('+5511988888888', 1000, 'novo')   -- TROCAR: número do amigo de teste
+  ('+5521989511871', 1000, 'novo'),  -- TROCAR: meu número
+  ('+5521992854171', 1000, 'novo')   -- TROCAR: número do amigo de teste
 on conflict (whatsapp_number) do nothing;
 
 -- Documenta a liberação manual do crédito inicial.
@@ -25,7 +25,7 @@ on conflict (whatsapp_number) do nothing;
 insert into credit_transactions (seller_id, amount_paid, credits_added, pix_payment_id, source, status)
 select s.id, null::numeric(10,2), 1000, null::text, 'manual_test', 'completed'
 from sellers s
-where s.whatsapp_number in ('+5511999999999', '+5511988888888')
+where s.whatsapp_number in ('+5521989511871', '+5521992854171')
   and not exists (
     select 1
     from credit_transactions ct

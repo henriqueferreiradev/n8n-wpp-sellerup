@@ -1,0 +1,628 @@
+{
+  "name": "bot-whatsapp-estados",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "messages"
+        ],
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000001",
+      "name": "WhatsApp Trigger",
+      "type": "n8n-nodes-base.whatsAppTrigger",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        320
+      ],
+      "credentials": {
+        "whatsAppTriggerApi": {
+          "id": "REPLACE_ME_TRIGGER",
+          "name": "WhatsApp OAuth (trigger)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// parse-mensagem — normaliza o payload cru da Meta em campos simples.\n// =====================================================================\n//\n// ESTRUTURA ASSUMIDA (WhatsApp Cloud API, campo de webhook \"messages\"):\n//\n//   {\n//     object: \"whatsapp_business_account\",\n//     entry: [{\n//       changes: [{\n//         value: {\n//           metadata: { phone_number_id, display_phone_number },\n//           contacts: [{ profile: { name }, wa_id }],\n//           messages: [{\n//             from: \"5521989511871\",   // sem \"+\"\n//             id: \"wamid....\",\n//             type: \"text\" | \"image\" | ...,\n//             text:  { body: \"...\" },\n//             image: { id: \"<media_id>\", mime_type, sha256 }\n//           }]\n//         }\n//       }]\n//     }]\n//   }\n//\n// O WhatsApp Trigger do n8n, dependendo da versão, entrega esse envelope\n// completo OU já desembrulhado em `value`. As duas formas são tratadas\n// abaixo — se o seu n8n entregar num formato diferente, olhe a saída crua\n// do trigger e ajuste `extrairValue()`.\n\n// A Meta manda webhooks de status (sent/delivered/read) no MESMO campo\n// \"messages\". Sem o filtro abaixo, cada resposta do bot dispararia o\n// workflow de novo, em loop.\nfunction extrairValue(body) {\n  if (!body || typeof body !== 'object') return null;\n  const doEnvelope = body?.entry?.[0]?.changes?.[0]?.value;\n  if (doEnvelope) return doEnvelope;\n  if (body.messages || body.statuses || body.metadata) return body;\n  return null;\n}\n\n// A Meta entrega o número sem \"+\" (5521989511871); o banco guarda em E.164.\nfunction paraE164(numero) {\n  const digitos = String(numero ?? '').replace(/\\D/g, '');\n  return digitos ? '+' + digitos : null;\n}\n\n// Gotcha conhecido de números brasileiros: a Meta às vezes entrega celulares\n// sem o 9º dígito (+5521989511871 chega como +552189511871). Geramos a outra\n// variante para o SELECT tentar as duas — senão o vendedor \"não existe\".\nfunction varianteNonoDigito(e164) {\n  if (!e164 || !e164.startsWith('+55')) return null;\n  const resto = e164.slice(3); // DDD + número\n  if (resto.length === 11 && resto[2] === '9') {\n    return '+55' + resto.slice(0, 2) + resto.slice(3); // tira o 9\n  }\n  if (resto.length === 10) {\n    return '+55' + resto.slice(0, 2) + '9' + resto.slice(2); // põe o 9\n  }\n  return null;\n}\n\nconst saida = [];\n\nfor (const item of $input.all()) {\n  const value = extrairValue(item.json);\n  if (!value) continue;\n\n  const mensagem = value?.messages?.[0];\n  if (!mensagem) continue; // status callback ou evento sem mensagem: ignora\n\n  const tipo = mensagem.type ?? 'desconhecido';\n  const numeroE164 = paraE164(mensagem.from);\n\n  saida.push({\n    json: {\n      // Número normalizado, usado para achar o vendedor no banco.\n      numero_remetente: numeroE164,\n      // Variante com/sem 9º dígito (cai no mesmo valor quando não se aplica,\n      // para o IN ($1, $2) do SELECT continuar válido).\n      numero_remetente_variante: varianteNonoDigito(numeroE164) ?? numeroE164,\n      // Número exatamente como a Meta mandou — é o que usamos para responder.\n      numero_remetente_raw: mensagem.from ?? null,\n\n      tipo_mensagem: tipo,\n      texto: tipo === 'text' ? (mensagem.text?.body ?? null) : null,\n      media_id: tipo === 'image' ? (mensagem.image?.id ?? null) : null,\n\n      // Número DO BOT que recebeu a mensagem. Evita ter que colar o\n      // phone_number_id à mão em cada node de envio.\n      phone_number_id: value?.metadata?.phone_number_id ?? null,\n\n      nome_contato: value?.contacts?.[0]?.profile?.name ?? null,\n      wamid: mensagem.id ?? null\n    }\n  });\n}\n\n// Array vazio encerra a execução aqui (caso dos status callbacks).\nreturn saida;\n"
+      },
+      "id": "a1000000-0000-4000-8000-000000000002",
+      "name": "parse-mensagem",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT *\nFROM sellers\nWHERE whatsapp_number IN ($1, $2)\nLIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ $json.numero_remetente }}, {{ $json.numero_remetente_variante }}"
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000003",
+      "name": "buscar-vendedor",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        380,
+        320
+      ],
+      "alwaysOutputData": true,
+      "notesInFlow": true,
+      "notes": "alwaysOutputData=true: sem isso, zero linhas = zero itens e o ramo 'não liberado' nunca roda.",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME_POSTGRES",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-vendedor-existe",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000004",
+      "name": "vendedor-existe",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        600,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "messageType": "text",
+        "textBody": "Esse número ainda não está liberado para testar o sistema. Fala com o Henrique pra ser adicionado.",
+        "additionalFields": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000005",
+      "name": "resp-nao-liberado",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        860,
+        520
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "REPLACE_ME_ENVIO",
+          "name": "WhatsApp Business Cloud (envio)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "estado-novo",
+                    "leftValue": "={{ $json.conversation_state }}",
+                    "rightValue": "novo",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "novo"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "estado-aguardando-geracao",
+                    "leftValue": "={{ $json.conversation_state }}",
+                    "rightValue": "aguardando_geracao",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "aguardando_geracao"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "estado-aguardando-aprovacao",
+                    "leftValue": "={{ $json.conversation_state }}",
+                    "rightValue": "aguardando_aprovacao",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "aguardando_aprovacao"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "estado-aguardando-creditos",
+                    "leftValue": "={{ $json.conversation_state }}",
+                    "rightValue": "aguardando_creditos",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "aguardando_creditos"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "estado-aguardando-oauth-ml",
+                    "leftValue": "={{ $json.conversation_state }}",
+                    "rightValue": "aguardando_oauth_ml",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "aguardando_oauth_ml"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "estado-publicando",
+                    "leftValue": "={{ $json.conversation_state }}",
+                    "rightValue": "publicando",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "publicando"
+            }
+          ]
+        },
+        "looseTypeValidation": true,
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "desconhecido"
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000006",
+      "name": "rotear-por-estado",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        860,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-eh-imagem",
+              "leftValue": "={{ $('parse-mensagem').first().json.tipo_mensagem }}",
+              "rightValue": "image",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000007",
+      "name": "eh-imagem",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO listings (seller_id, original_photo_url)\nVALUES ($1, $2)\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ $json.id }}, {{ 'whatsapp_media:' + $('parse-mensagem').first().json.media_id }}"
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000008",
+      "name": "criar-listing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1340,
+        -180
+      ],
+      "notesInFlow": true,
+      "notes": "Só a referência da mídia. O download do binário fica pro bloco (c): a URL da Meta expira rápido.",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME_POSTGRES",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sellers\nSET conversation_state = 'aguardando_geracao',\n    updated_at = now()\nWHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ $('buscar-vendedor').first().json.id }}"
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000009",
+      "name": "atualizar-estado",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1560,
+        -180
+      ],
+      "notesInFlow": true,
+      "notes": "updated_at também é setado pelo trigger do banco; explícito aqui só para o UPDATE ser legível sozinho.",
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_ME_POSTGRES",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "messageType": "text",
+        "textBody": "Recebi sua foto! 📸 Nos próximos passos do desenvolvimento, aqui é onde eu vou gerar as 8 fotos, título e descrição automaticamente — por enquanto essa parte ainda não está implementada.",
+        "additionalFields": {}
+      },
+      "id": "a1000000-0000-4000-8000-00000000000a",
+      "name": "resp-foto-recebida",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1780,
+        -180
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "REPLACE_ME_ENVIO",
+          "name": "WhatsApp Business Cloud (envio)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "messageType": "text",
+        "textBody": "Manda uma foto do produto que você quer anunciar pra eu começar.",
+        "additionalFields": {}
+      },
+      "id": "a1000000-0000-4000-8000-00000000000b",
+      "name": "resp-pede-foto",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1340,
+        20
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "REPLACE_ME_ENVIO",
+          "name": "WhatsApp Business Cloud (envio)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "messageType": "text",
+        "textBody": "=Você já está numa etapa mais avançada do fluxo ({{ $json.conversation_state }}), que ainda não foi implementada nesta fase do desenvolvimento.",
+        "additionalFields": {}
+      },
+      "id": "a1000000-0000-4000-8000-00000000000c",
+      "name": "resp-etapa-avancada",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1340,
+        200
+      ],
+      "notesInFlow": true,
+      "notes": "Recebe as 5 saídas de estados ainda não implementados (blocos c, d, e).",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "REPLACE_ME_ENVIO",
+          "name": "WhatsApp Business Cloud (envio)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "messageType": "text",
+        "textBody": "=Sua conversa está num estado que eu não reconheço ({{ $json.conversation_state }}) — provavelmente algo do desenvolvimento em andamento. Fala com o Henrique pra resetar.",
+        "additionalFields": {}
+      },
+      "id": "a1000000-0000-4000-8000-00000000000d",
+      "name": "resp-estado-desconhecido",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1340,
+        380
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "REPLACE_ME_ENVIO",
+          "name": "WhatsApp Business Cloud (envio)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "WhatsApp Trigger": {
+      "main": [
+        [
+          {
+            "node": "parse-mensagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "parse-mensagem": {
+      "main": [
+        [
+          {
+            "node": "buscar-vendedor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "buscar-vendedor": {
+      "main": [
+        [
+          {
+            "node": "vendedor-existe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "vendedor-existe": {
+      "main": [
+        [
+          {
+            "node": "rotear-por-estado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "resp-nao-liberado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "rotear-por-estado": {
+      "main": [
+        [
+          {
+            "node": "eh-imagem",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "resp-etapa-avancada",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "resp-etapa-avancada",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "resp-etapa-avancada",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "resp-etapa-avancada",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "resp-etapa-avancada",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "resp-estado-desconhecido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "eh-imagem": {
+      "main": [
+        [
+          {
+            "node": "criar-listing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "resp-pede-foto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "criar-listing": {
+      "main": [
+        [
+          {
+            "node": "atualizar-estado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "atualizar-estado": {
+      "main": [
+        [
+          {
+            "node": "resp-foto-recebida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}
