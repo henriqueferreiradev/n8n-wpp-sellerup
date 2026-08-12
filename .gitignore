@@ -1,0 +1,9 @@
+# credenciais reais — só o .env.example é versionado
+.env
+.env.local
+
+# SO / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
