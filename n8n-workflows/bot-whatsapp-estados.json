@@ -1,9 +1,5 @@
 {
   "name": "bot-whatsapp-estados",
-  "active": false,
-  "settings": {
-    "executionOrder": "v1"
-  },
   "nodes": [
     {
       "parameters": {
@@ -12,32 +8,33 @@
         ],
         "options": {}
       },
-      "id": "a1000000-0000-4000-8000-000000000001",
+      "id": "61d39a0e-5389-4f90-bb63-a3c8862bd85d",
       "name": "WhatsApp Trigger",
       "type": "n8n-nodes-base.whatsAppTrigger",
       "typeVersion": 1,
       "position": [
-        -60,
-        320
+        -1232,
+        1744
       ],
+      "webhookId": "cf5bf28a-3af0-459e-8e99-08f901f7b7d1",
       "credentials": {
         "whatsAppTriggerApi": {
-          "id": "REPLACE_ME_TRIGGER",
-          "name": "WhatsApp OAuth (trigger)"
+          "id": "5rnK0F71dD25F2Tk",
+          "name": "WhatsApp OAuth account"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "// =====================================================================\n// parse-mensagem — normaliza o payload cru da Meta em campos simples.\n// =====================================================================\n//\n// ESTRUTURA ASSUMIDA (WhatsApp Cloud API, campo de webhook \"messages\"):\n//\n//   {\n//     object: \"whatsapp_business_account\",\n//     entry: [{\n//       changes: [{\n//         value: {\n//           metadata: { phone_number_id, display_phone_number },\n//           contacts: [{ profile: { name }, wa_id }],\n//           messages: [{\n//             from: \"5521989511871\",   // sem \"+\"\n//             id: \"wamid....\",\n//             type: \"text\" | \"image\" | ...,\n//             text:  { body: \"...\" },\n//             image: { id: \"<media_id>\", mime_type, sha256 }\n//           }]\n//         }\n//       }]\n//     }]\n//   }\n//\n// O WhatsApp Trigger do n8n, dependendo da versão, entrega esse envelope\n// completo OU já desembrulhado em `value`. As duas formas são tratadas\n// abaixo — se o seu n8n entregar num formato diferente, olhe a saída crua\n// do trigger e ajuste `extrairValue()`.\n\n// A Meta manda webhooks de status (sent/delivered/read) no MESMO campo\n// \"messages\". Sem o filtro abaixo, cada resposta do bot dispararia o\n// workflow de novo, em loop.\nfunction extrairValue(body) {\n  if (!body || typeof body !== 'object') return null;\n  const doEnvelope = body?.entry?.[0]?.changes?.[0]?.value;\n  if (doEnvelope) return doEnvelope;\n  if (body.messages || body.statuses || body.metadata) return body;\n  return null;\n}\n\n// A Meta entrega o número sem \"+\" (5521989511871); o banco guarda em E.164.\nfunction paraE164(numero) {\n  const digitos = String(numero ?? '').replace(/\\D/g, '');\n  return digitos ? '+' + digitos : null;\n}\n\n// Gotcha conhecido de números brasileiros: a Meta às vezes entrega celulares\n// sem o 9º dígito (+5521989511871 chega como +552189511871). Geramos a outra\n// variante para o SELECT tentar as duas — senão o vendedor \"não existe\".\nfunction varianteNonoDigito(e164) {\n  if (!e164 || !e164.startsWith('+55')) return null;\n  const resto = e164.slice(3); // DDD + número\n  if (resto.length === 11 && resto[2] === '9') {\n    return '+55' + resto.slice(0, 2) + resto.slice(3); // tira o 9\n  }\n  if (resto.length === 10) {\n    return '+55' + resto.slice(0, 2) + '9' + resto.slice(2); // põe o 9\n  }\n  return null;\n}\n\nconst saida = [];\n\nfor (const item of $input.all()) {\n  const value = extrairValue(item.json);\n  if (!value) continue;\n\n  const mensagem = value?.messages?.[0];\n  if (!mensagem) continue; // status callback ou evento sem mensagem: ignora\n\n  const tipo = mensagem.type ?? 'desconhecido';\n  const numeroE164 = paraE164(mensagem.from);\n\n  saida.push({\n    json: {\n      // Número normalizado, usado para achar o vendedor no banco.\n      numero_remetente: numeroE164,\n      // Variante com/sem 9º dígito (cai no mesmo valor quando não se aplica,\n      // para o IN ($1, $2) do SELECT continuar válido).\n      numero_remetente_variante: varianteNonoDigito(numeroE164) ?? numeroE164,\n      // Número exatamente como a Meta mandou — é o que usamos para responder.\n      numero_remetente_raw: mensagem.from ?? null,\n\n      tipo_mensagem: tipo,\n      texto: tipo === 'text' ? (mensagem.text?.body ?? null) : null,\n      media_id: tipo === 'image' ? (mensagem.image?.id ?? null) : null,\n\n      // Número DO BOT que recebeu a mensagem. Evita ter que colar o\n      // phone_number_id à mão em cada node de envio.\n      phone_number_id: value?.metadata?.phone_number_id ?? null,\n\n      nome_contato: value?.contacts?.[0]?.profile?.name ?? null,\n      wamid: mensagem.id ?? null\n    }\n  });\n}\n\n// Array vazio encerra a execução aqui (caso dos status callbacks).\nreturn saida;\n"
+        "jsCode": "// =====================================================================\n// parse-mensagem — normaliza o payload cru da Meta em campos simples.\n// =====================================================================\n//\n// ESTRUTURA ASSUMIDA (WhatsApp Cloud API, campo de webhook \"messages\"):\n//\n//   {\n//     object: \"whatsapp_business_account\",\n//     entry: [{\n//       changes: [{\n//         value: {\n//           metadata: { phone_number_id, display_phone_number },\n//           contacts: [{ profile: { name }, wa_id }],\n//           messages: [{\n//             from: \"5521989511871\",   // sem \"+\"\n//             id: \"wamid....\",\n//             type: \"text\" | \"image\" | ...,\n//             text:  { body: \"...\" },\n//             image: { id: \"<media_id>\", mime_type, sha256 }\n//           }]\n//         }\n//       }]\n//     }]\n//   }\n//\n// O WhatsApp Trigger do n8n, dependendo da versão, entrega esse envelope\n// completo OU já desembrulhado em `value`. As duas formas são tratadas\n// abaixo — se o seu n8n entregar num formato diferente, olhe a saída crua\n// do trigger e ajuste `extrairValue()`.\n\n// A Meta manda webhooks de status (sent/delivered/read) no MESMO campo\n// \"messages\". Sem o filtro abaixo, cada resposta do bot dispararia o\n// workflow de novo, em loop.\nfunction extrairValue(body) {\n  if (!body || typeof body !== 'object') return null;\n  const doEnvelope = body?.entry?.[0]?.changes?.[0]?.value;\n  if (doEnvelope) return doEnvelope;\n  if (body.messages || body.statuses || body.metadata) return body;\n  return null;\n}\n\n// A Meta entrega o número sem \"+\" (5521989511871); o banco guarda em E.164.\nfunction paraE164(numero) {\n  const digitos = String(numero ?? '').replace(/\\D/g, '');\n  return digitos ? '+' + digitos : null;\n}\n\n// Gotcha conhecido de números brasileiros: a Meta às vezes entrega celulares\n// sem o 9º dígito (+5521989511871 chega como +552189511871). Geramos a outra\n// variante para o SELECT tentar as duas — senão o vendedor \"não existe\".\nfunction varianteNonoDigito(e164) {\n  if (!e164 || !e164.startsWith('+55')) return null;\n  const resto = e164.slice(3); // DDD + número\n  if (resto.length === 11 && resto[2] === '9') {\n    return '+55' + resto.slice(0, 2) + resto.slice(3); // tira o 9\n  }\n  if (resto.length === 10) {\n    return '+55' + resto.slice(0, 2) + '9' + resto.slice(2); // põe o 9\n  }\n  return null;\n}\n\nconst saida = [];\n\nfor (const item of $input.all()) {\n  const value = extrairValue(item.json);\n  if (!value) continue;\n\n  const mensagem = value?.messages?.[0];\n  if (!mensagem) continue; // status callback ou evento sem mensagem: ignora\n\n  const tipo = mensagem.type ?? 'desconhecido';\n  const numeroE164 = paraE164(mensagem.from);\n\n  saida.push({\n    json: {\n      // Número normalizado, usado para achar o vendedor no banco.\n      numero_remetente: numeroE164,\n      // Variante com/sem 9º dígito (cai no mesmo valor quando não se aplica,\n      // para o IN ($1, $2) do SELECT continuar válido).\n      numero_remetente_variante: varianteNonoDigito(numeroE164) ?? numeroE164,\n      // Número exatamente como a Meta mandou — é o que usamos para responder.\n      numero_remetente_raw: mensagem.from ?? null,\n\n      tipo_mensagem: tipo,\n      texto: tipo === 'text' ? (mensagem.text?.body ?? null) : null,\n      media_id: tipo === 'image' ? (mensagem.image?.id ?? null) : null,\n\n      // Resposta de um Reply Button (bloco c). Estrutura assumida do payload:\n      //   messages[0] = {\n      //     type: \"interactive\",\n      //     interactive: { type: \"button_reply\", button_reply: { id: \"aprovar\", title: \"Aprovar\" } }\n      //   }\n      // botao_id fica null para qualquer mensagem que não seja essa.\n      botao_id: tipo === 'interactive' ? (mensagem.interactive?.button_reply?.id ?? null) : null,\n\n      // Número DO BOT que recebeu a mensagem. Evita ter que colar o\n      // phone_number_id à mão em cada node de envio.\n      phone_number_id: value?.metadata?.phone_number_id ?? null,\n\n      nome_contato: value?.contacts?.[0]?.profile?.name ?? null,\n      wamid: mensagem.id ?? null\n    }\n  });\n}\n\n// Array vazio encerra a execução aqui (caso dos status callbacks).\nreturn saida;\n"
       },
-      "id": "a1000000-0000-4000-8000-000000000002",
+      "id": "2cd04ca0-5915-4e87-890a-010f46825457",
       "name": "parse-mensagem",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        160,
-        320
+        -1008,
+        1744
       ]
     },
     {
@@ -45,26 +42,26 @@
         "operation": "executeQuery",
         "query": "SELECT *\nFROM sellers\nWHERE whatsapp_number IN ($1, $2)\nLIMIT 1;",
         "options": {
-          "queryReplacement": "={{ $json.numero_remetente }}, {{ $json.numero_remetente_variante }}"
+          "queryReplacement": "={{ [$json.numero_remetente, $json.numero_remetente_variante] }}"
         }
       },
-      "id": "a1000000-0000-4000-8000-000000000003",
+      "id": "2469de74-9042-484d-8010-27e3f05a8475",
       "name": "buscar-vendedor",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        380,
-        320
+        -800,
+        1744
       ],
       "alwaysOutputData": true,
       "notesInFlow": true,
-      "notes": "alwaysOutputData=true: sem isso, zero linhas = zero itens e o ramo 'não liberado' nunca roda.",
       "credentials": {
         "postgres": {
-          "id": "REPLACE_ME_POSTGRES",
-          "name": "Supabase Postgres"
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
         }
-      }
+      },
+      "notes": "alwaysOutputData=true: sem isso, zero linhas = zero itens e o ramo 'não liberado' nunca roda."
     },
     {
       "parameters": {
@@ -92,37 +89,36 @@
         "looseTypeValidation": true,
         "options": {}
       },
-      "id": "a1000000-0000-4000-8000-000000000004",
+      "id": "19319379-b493-4662-aeb1-e1117b5e0b6c",
       "name": "vendedor-existe",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        600,
-        320
+        -576,
+        1744
       ]
     },
     {
       "parameters": {
-        "resource": "message",
         "operation": "send",
         "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
         "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
-        "messageType": "text",
         "textBody": "Esse número ainda não está liberado para testar o sistema. Fala com o Henrique pra ser adicionado.",
         "additionalFields": {}
       },
-      "id": "a1000000-0000-4000-8000-000000000005",
+      "id": "4bf6c7c0-5f51-43da-9aa4-e5d5a2ec0114",
       "name": "resp-nao-liberado",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        860,
-        520
+        -320,
+        1952
       ],
+      "webhookId": "b884770b-1f13-48fd-ad0b-fbf106a42a29",
       "credentials": {
         "whatsAppApi": {
-          "id": "REPLACE_ME_ENVIO",
-          "name": "WhatsApp Business Cloud (envio)"
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
         }
       }
     },
@@ -273,6 +269,54 @@
               },
               "renameOutput": true,
               "outputKey": "publicando"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "estado-aguardando-nome-produto",
+                    "leftValue": "={{ $json.conversation_state }}",
+                    "rightValue": "aguardando_nome_produto",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "aguardando_nome_produto"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "estado-aguardando-detalhes-produto",
+                    "leftValue": "={{ $json.conversation_state }}",
+                    "rightValue": "aguardando_detalhes_produto",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "aguardando_detalhes_produto"
             }
           ]
         },
@@ -282,13 +326,13 @@
           "renameFallbackOutput": "desconhecido"
         }
       },
-      "id": "a1000000-0000-4000-8000-000000000006",
+      "id": "c7addfed-6df0-4bdf-8902-933ef2d97074",
       "name": "rotear-por-estado",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.2,
       "position": [
-        860,
-        140
+        -320,
+        1568
       ]
     },
     {
@@ -316,13 +360,13 @@
         "looseTypeValidation": true,
         "options": {}
       },
-      "id": "a1000000-0000-4000-8000-000000000007",
+      "id": "5b3d721d-900d-481a-94a0-01b64b631559",
       "name": "eh-imagem",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1100,
-        -100
+        -80,
+        1328
       ]
     },
     {
@@ -330,154 +374,1277 @@
         "operation": "executeQuery",
         "query": "INSERT INTO listings (seller_id, original_photo_url)\nVALUES ($1, $2)\nRETURNING id;",
         "options": {
-          "queryReplacement": "={{ $json.id }}, {{ 'whatsapp_media:' + $('parse-mensagem').first().json.media_id }}"
+          "queryReplacement": "={{ [$json.id, 'whatsapp_media:' + $('parse-mensagem').first().json.media_id] }}"
         }
       },
-      "id": "a1000000-0000-4000-8000-000000000008",
+      "id": "8cc9fc62-79ab-4e34-a682-f726184547ce",
       "name": "criar-listing",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        1340,
-        -180
+        176,
+        1248
       ],
       "notesInFlow": true,
-      "notes": "Só a referência da mídia. O download do binário fica pro bloco (c): a URL da Meta expira rápido.",
       "credentials": {
         "postgres": {
-          "id": "REPLACE_ME_POSTGRES",
-          "name": "Supabase Postgres"
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "Só a referência da mídia. O download do binário fica pro bloco (c): a URL da Meta expira rápido."
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "Manda uma foto do produto que você quer anunciar pra eu começar.",
+        "additionalFields": {}
+      },
+      "id": "0c6768e0-6abc-41ad-9abf-f2f4ae85e013",
+      "name": "resp-pede-foto",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        176,
+        1440
+      ],
+      "webhookId": "24a3fe1d-c978-4ce2-a38d-914e058404ab",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "=Você já está numa etapa mais avançada do fluxo ({{ $json.conversation_state }}), que ainda não foi implementada nesta fase do desenvolvimento.",
+        "additionalFields": {}
+      },
+      "id": "c5ff87d7-31d5-422c-ae64-f9a4989fe90b",
+      "name": "resp-etapa-avancada",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        176,
+        1632
+      ],
+      "notesInFlow": true,
+      "webhookId": "8a59d473-69f3-4cdb-ac2e-808fd8b386db",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      },
+      "notes": "Recebe as 5 saídas de estados ainda não implementados (blocos c, d, e)."
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "=Sua conversa está num estado que eu não reconheço ({{ $json.conversation_state }}) — provavelmente algo do desenvolvimento em andamento. Fala com o Henrique pra resetar.",
+        "additionalFields": {}
+      },
+      "id": "48c0a2c9-0dc7-4f93-85e4-c13d6bb3135c",
+      "name": "resp-estado-desconhecido",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        176,
+        1808
+      ],
+      "webhookId": "53a71b14-bacb-4da9-b2e7-267c5f687249",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/v21.0/{{ $('parse-mensagem').first().json.media_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "options": {}
+      },
+      "id": "60c4c834-8e0a-47ab-a0cc-6210ee86eaa7",
+      "name": "buscar-url-media",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        608,
+        1040
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      },
+      "notes": "GET no media_id: devolve uma URL temporária (expira em minutos) pro binário da foto."
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "d3c76daa-8f0b-4291-a135-e0ca6ac9afbb",
+      "name": "baixar-foto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        848,
+        1040
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      },
+      "notes": "Precisa rodar na mesma execução que buscar-url-media — a URL expira em poucos minutos. Por isso o download (e o upload pro Storage logo a seguir) acontece ANTES de perguntar o nome do produto, não depois: entre a foto chegar e o vendedor responder o nome pode passar muito mais que alguns minutos."
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// salvar-foto-original-storage — sobe a foto original pro bucket do\n// Supabase Storage assim que ela chega, antes de perguntar o nome do\n// produto. Motivo: entre a foto chegar e o vendedor responder o nome do\n// produto pode passar bem mais que alguns minutos (é uma pausa esperando\n// resposta humana) — a URL temporária da Meta não sobrevive até lá, mas\n// uma URL do Storage sim.\n//\n// Segredos (SUPABASE_URL, SUPABASE_STORAGE_BUCKET, SUPABASE_SERVICE_ROLE_KEY)\n// vêm das variáveis de ambiente do container ($env), definidas no .env do\n// Docker — Code node não anexa Credential pela UI. Ver\n// docs/gemini-supabase-storage-setup.md.\n\nconst SUPABASE_URL = $env.SUPABASE_URL;\nconst BUCKET = $env.SUPABASE_STORAGE_BUCKET || 'listing-photos';\n\nconst listingId = $('criar-listing').first().json.id;\nconst item = $input.first();\nconst foto = item.binary.data;\nconst extensao = (foto.mimeType || 'image/jpeg').includes('png') ? 'png' : 'jpg';\nconst caminho = `${listingId}/original.${extensao}`;\n\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${caminho}`,\n  headers: {\n    apikey: $env.SUPABASE_SERVICE_ROLE_KEY,\n    Authorization: `Bearer ${$env.SUPABASE_SERVICE_ROLE_KEY}`,\n    'Content-Type': foto.mimeType,\n    'x-upsert': 'true'\n  },\n  body: Buffer.from(foto.data, 'base64')\n});\n\nreturn [{\n  json: {\n    listing_id: listingId,\n    original_photo_storage_url: `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${caminho}`\n  }\n}];\n"
+      },
+      "id": "2a8f224a-d475-4866-9348-f8e8c6015785",
+      "name": "salvar-foto-original-storage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1088,
+        1040
+      ],
+      "notesInFlow": true,
+      "notes": "Sobe só a foto original (as 8 geradas só existem depois que o nome do produto + pesquisa + GPT rodarem). URL pública salva em listings.original_photo_url e em conversation_context, pra sobreviver entre execuções."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE listings\nSET original_photo_url = $1\nWHERE id = $2;",
+        "options": {
+          "queryReplacement": "={{ [$json.original_photo_storage_url, $json.listing_id] }}"
+        }
+      },
+      "id": "0fbd4280-fa34-440a-8553-ca7f6081c4e6",
+      "name": "atualizar-listing-foto-original",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1328,
+        1040
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "Recebi sua foto! 📸 Antes de gerar o anúncio, me conta: qual é o nome do produto?",
+        "additionalFields": {}
+      },
+      "id": "3714d78f-0247-4841-94d7-52d169807fe3",
+      "name": "perguntar-nome-produto",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1568,
+        1040
+      ],
+      "webhookId": "1df213e0-db9b-4814-a45b-3e56a779193a",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
         }
       }
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE sellers\nSET conversation_state = 'aguardando_geracao',\n    updated_at = now()\nWHERE id = $1;",
+        "query": "UPDATE sellers\nSET conversation_state = 'aguardando_nome_produto',\n    conversation_context = jsonb_build_object(\n      'listing_id', $1::text,\n      'original_photo_storage_url', $2\n    ),\n    updated_at = now()\nWHERE id = $3;",
         "options": {
-          "queryReplacement": "={{ $('buscar-vendedor').first().json.id }}"
+          "queryReplacement": "={{ [$('salvar-foto-original-storage').first().json.listing_id, $('salvar-foto-original-storage').first().json.original_photo_storage_url, $('buscar-vendedor').first().json.id] }}"
         }
       },
-      "id": "a1000000-0000-4000-8000-000000000009",
-      "name": "atualizar-estado",
+      "id": "3b5f966f-91a0-4b06-9ac1-29c82319408f",
+      "name": "atualizar-estado-nome-produto",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        1560,
-        -180
+        1808,
+        1040
       ],
-      "notesInFlow": true,
-      "notes": "updated_at também é setado pelo trigger do banco; explícito aqui só para o UPDATE ser legível sozinho.",
       "credentials": {
         "postgres": {
-          "id": "REPLACE_ME_POSTGRES",
-          "name": "Supabase Postgres"
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
         }
       }
     },
     {
       "parameters": {
-        "resource": "message",
-        "operation": "send",
-        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
-        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
-        "messageType": "text",
-        "textBody": "Recebi sua foto! 📸 Nos próximos passos do desenvolvimento, aqui é onde eu vou gerar as 8 fotos, título e descrição automaticamente — por enquanto essa parte ainda não está implementada.",
-        "additionalFields": {}
+        "operation": "executeQuery",
+        "query": "UPDATE sellers\nSET conversation_context = conversation_context || jsonb_build_object('nome_produto', $1::text),\n    conversation_state = 'aguardando_geracao',\n    updated_at = now()\nWHERE id = $2;",
+        "options": {
+          "queryReplacement": "={{ [$('parse-mensagem').first().json.texto, $('buscar-vendedor').first().json.id] }}"
+        }
       },
-      "id": "a1000000-0000-4000-8000-00000000000a",
-      "name": "resp-foto-recebida",
-      "type": "n8n-nodes-base.whatsApp",
-      "typeVersion": 1,
+      "id": "816bc5b6-2e08-49fa-80b7-4e2c7e2922c3",
+      "name": "salvar-nome-produto",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
       "position": [
-        1780,
-        -180
+        608,
+        1600
       ],
       "credentials": {
-        "whatsAppApi": {
-          "id": "REPLACE_ME_ENVIO",
-          "name": "WhatsApp Business Cloud (envio)"
+        "postgres": {
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
         }
       }
     },
     {
       "parameters": {
-        "resource": "message",
         "operation": "send",
         "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
         "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
-        "messageType": "text",
-        "textBody": "Manda uma foto do produto que você quer anunciar pra eu começar.",
+        "textBody": "Show! 🔎 Já estou pesquisando sobre o produto e montando o anúncio — te chamo assim que tiver tudo pronto.",
         "additionalFields": {}
       },
-      "id": "a1000000-0000-4000-8000-00000000000b",
-      "name": "resp-pede-foto",
+      "id": "648b1d6d-c7cc-4b5d-b839-612246747b5c",
+      "name": "ack-processando-1",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        1340,
-        20
+        848,
+        1600
       ],
+      "webhookId": "6b5863dd-3b93-4610-a721-08f0fe7dd1e3",
       "credentials": {
         "whatsAppApi": {
-          "id": "REPLACE_ME_ENVIO",
-          "name": "WhatsApp Business Cloud (envio)"
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
         }
       }
     },
     {
       "parameters": {
-        "resource": "message",
-        "operation": "send",
-        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
-        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
-        "messageType": "text",
-        "textBody": "=Você já está numa etapa mais avançada do fluxo ({{ $json.conversation_state }}), que ainda não foi implementada nesta fase do desenvolvimento.",
-        "additionalFields": {}
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"Pesquise informações reais e verificáveis sobre este produto: \\\"{{ $('parse-mensagem').first().json.texto }}\\\". Preciso de um resumo factual, em português, adequado para escrever um anúncio de e-commerce: o que é, para que serve, materiais/características confirmadas, e qualquer medida ou especificação numérica que você conseguir confirmar com fonte. NÃO invente nenhum dado — se não encontrar uma informação, simplesmente não a inclua. Responda em texto corrido, sem markdown.\"\n    }]\n  }],\n  \"tools\": [{ \"google_search\": {} }]\n}",
+        "options": {}
       },
-      "id": "a1000000-0000-4000-8000-00000000000c",
-      "name": "resp-etapa-avancada",
-      "type": "n8n-nodes-base.whatsApp",
-      "typeVersion": 1,
+      "id": "39ea0025-e401-4e0f-b574-ba8456990024",
+      "name": "buscar-info-produto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
-        1340,
-        200
+        1088,
+        1600
       ],
       "notesInFlow": true,
-      "notes": "Recebe as 5 saídas de estados ainda não implementados (blocos c, d, e).",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "x7IS2FVLf0fGltc3",
+          "name": "Gemini API (HTTP)"
+        }
+      },
+      "notes": "Grounding with Google Search (tools: [{ google_search: {} }]) — é a forma documentada de habilitar busca real no Gemini. Modelo de texto usado para a busca: gemini-3.6-flash (o antigo gemini-3.1-flash retornava 404 \"model not found\"; confirmado funcionando em produção) — se o nome do modelo mudar de novo, ajuste aqui."
+    },
+    {
+      "parameters": {
+        "jsCode": "const resposta = $json;\nconst candidato = resposta.candidates?.[0];\nconst chunks = candidato?.groundingMetadata?.groundingChunks ?? [];\nconst texto = (candidato?.content?.parts ?? []).map(p => p.text).filter(Boolean).join('\\n');\nconst confiante = chunks.length > 0 && texto.trim().length > 0;\n\nreturn [{\n  json: {\n    confiante,\n    descricao_base: texto,\n    fonte: 'busca',\n    nome_produto: $('parse-mensagem').first().json.texto\n  }\n}];\n"
+      },
+      "id": "e85f9df1-d245-4281-a781-e7f2bdc041fe",
+      "name": "avaliar-grounding",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        1600
+      ],
+      "notesInFlow": true,
+      "notes": "confiante = true só quando o Gemini realmente ancorou a resposta em resultados de busca (groundingChunks não vazio) E devolveu texto. Sem isso, cai no caminho de perguntar detalhes pro vendedor."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-1",
+              "leftValue": "={{ $json.confiante }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "c9ad6454-8282-407a-8907-a2eba5cbc880",
+      "name": "grounding-confiavel",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1568,
+        1600
+      ],
+      "notesInFlow": true,
+      "notes": "true → segue direto pra geração de título/descrição. false → pergunta detalhes extras pro vendedor antes de continuar."
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "Não achei muita informação sobre esse produto na internet. Pode me contar rapidinho as principais características dele? (material, pra que serve, algum diferencial)",
+        "additionalFields": {}
+      },
+      "id": "6151a817-de26-4dda-a677-419f058e657a",
+      "name": "perguntar-detalhes-produto",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1808,
+        1744
+      ],
+      "webhookId": "b0edd03f-eb2e-4a15-9634-40e8e2ebde99",
       "credentials": {
         "whatsAppApi": {
-          "id": "REPLACE_ME_ENVIO",
-          "name": "WhatsApp Business Cloud (envio)"
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
         }
       }
     },
     {
       "parameters": {
-        "resource": "message",
+        "operation": "executeQuery",
+        "query": "UPDATE sellers\nSET conversation_state = 'aguardando_detalhes_produto',\n    updated_at = now()\nWHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$('buscar-vendedor').first().json.id] }}"
+        }
+      },
+      "id": "744658e0-5b6b-481b-aba3-359e2acf7aa2",
+      "name": "atualizar-estado-detalhes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2048,
+        1744
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sellers\nSET conversation_context = conversation_context || jsonb_build_object('descricao_produto', $1::text, 'fonte_descricao', 'vendedor'),\n    conversation_state = 'aguardando_geracao',\n    updated_at = now()\nWHERE id = $2;",
+        "options": {
+          "queryReplacement": "={{ [$('parse-mensagem').first().json.texto, $('buscar-vendedor').first().json.id] }}"
+        }
+      },
+      "id": "3ec1df83-44ee-433b-bbb1-9ee7a7199db8",
+      "name": "salvar-detalhes-produto",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        608,
+        2048
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
         "operation": "send",
         "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
         "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
-        "messageType": "text",
-        "textBody": "=Sua conversa está num estado que eu não reconheço ({{ $json.conversation_state }}) — provavelmente algo do desenvolvimento em andamento. Fala com o Henrique pra resetar.",
+        "textBody": "Show! ✍️ Já estou montando o anúncio com essas informações — te chamo assim que tiver tudo pronto.",
         "additionalFields": {}
       },
-      "id": "a1000000-0000-4000-8000-00000000000d",
-      "name": "resp-estado-desconhecido",
+      "id": "fddb1925-b47a-4029-846a-7f1853cf8179",
+      "name": "ack-processando-2",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        1340,
-        380
+        848,
+        2048
+      ],
+      "webhookId": "810f8217-d5bd-4881-b250-94b01a635177",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    descricao_base: $('parse-mensagem').first().json.texto,\n    fonte: 'vendedor',\n    nome_produto: $('buscar-vendedor').first().json.conversation_context.nome_produto\n  }\n}];\n"
+      },
+      "id": "cf21300a-2440-4d0c-9ea2-8243ec369592",
+      "name": "preparar-conteudo-vendedor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1088,
+        2048
+      ],
+      "notesInFlow": true,
+      "notes": "Mesmo formato de saída do avaliar-grounding (nome_produto/descricao_base/fonte), pra convergir no mesmo node gerar-titulo-descricao."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"Você é um redator de anúncios do Mercado Livre. Escreva um anúncio para o produto \\\"{{ $json.nome_produto }}\\\" usando SOMENTE as informações factuais abaixo como base — NÃO invente nenhum dado numérico específico (peso, dimensão, capacidade, voltagem, certificação) que não esteja explicitamente nas informações abaixo; se não houver confirmação de um dado, simplesmente omita-o.\\n\\nInformações factuais sobre o produto (fonte: {{ $json.fonte }}):\\n{{ $json.descricao_base }}\\n\\nEscreva:\\n(1) um TÍTULO de venda com NO MÁXIMO 60 caracteres — limite rígido do Mercado Livre, não ultrapasse;\\n(2) uma DESCRICAO estruturada em EXATAMENTE estas 3 seções, cada uma com um cabeçalho em maiúsculas, nesta ordem:\\nSOBRE O PRODUTO — um parágrafo de abertura apresentando o produto.\\nCARACTERÍSTICAS — lista do que é visível/confirmado pelas informações factuais acima (nunca um número que não esteja lá).\\nCOMO USAR — passo a passo funcional de uso.\\nNÃO inclua nenhuma seção de garantia ou envio — isso é adicionado separadamente, fora do seu texto.\\n\\nResponda apenas com um JSON no formato {\\\"titulo\\\": \\\"...\\\", \\\"descricao\\\": \\\"...\\\"}, sem markdown, sem texto fora do JSON.\"\n    }]\n  }],\n  \"generationConfig\": { \"responseMimeType\": \"application/json\" }\n}",
+        "options": {}
+      },
+      "id": "3027d341-5060-4f76-b752-8b7c67495361",
+      "name": "gerar-titulo-descricao",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2048,
+        1600
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "x7IS2FVLf0fGltc3",
+          "name": "Gemini API (HTTP)"
+        }
+      },
+      "notes": "Texto só (não usa a foto) — a base factual já vem da busca ou do vendedor, não da inspeção visual. GARANTIA E ENVIO NÃO é pedida aqui: é um bloco fixo, colado por código no node seguinte, não gerado por IA."
+    },
+    {
+      "parameters": {
+        "jsCode": "const GARANTIA_ENVIO = 'GARANTIA E ENVIO\\nProduto verificado antes da postagem. Envio rápido com embalagem protegida.\\nEm caso de dúvidas, entre em contato pelo canal de mensagens do anúncio para atendimento ágil.';\n\nconst raw = $json.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';\nlet parsed;\ntry {\n  parsed = JSON.parse(raw);\n} catch (e) {\n  parsed = {};\n}\n\nconst titulo = (parsed.titulo || 'Produto à venda').slice(0, 60);\nconst descricaoBase = parsed.descricao || 'Não foi possível gerar a descrição automaticamente — edite manualmente.';\nconst descricao = `${descricaoBase}\\n\\n${GARANTIA_ENVIO}`;\n\nreturn [{ json: { titulo, descricao } }];\n"
+      },
+      "id": "5e60e0df-5f1a-484f-9357-e836422055f8",
+      "name": "montar-titulo-descricao-final",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2288,
+        1600
+      ],
+      "notesInFlow": true,
+      "notes": "GARANTIA E ENVIO é texto fixo, sempre igual, colado aqui por código — nunca passa pelo Gemini, então não tem como um dia sair diferente do combinado ou incluir uma promessa que a empresa não faz."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE listings\nSET generated_title = $1,\n    generated_description = $2\nWHERE id = $3\nRETURNING id, generated_title, generated_description, original_photo_url;",
+        "options": {
+          "queryReplacement": "={{ [$json.titulo, $json.descricao, $('buscar-vendedor').first().json.conversation_context.listing_id] }}"
+        }
+      },
+      "id": "c388a9ba-a223-424d-923a-9e19de344964",
+      "name": "atualizar-listing-titulo-descricao",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2528,
+        1600
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "postgres": {
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "RETURNING devolve original_photo_url junto (já setado bem antes, no node atualizar-listing-foto-original) — é o que permite o node seguinte não precisar saber qual dos dois caminhos rodou."
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "=*{{ $('atualizar-listing-titulo-descricao').first().json.generated_title }}*",
+        "additionalFields": {}
+      },
+      "id": "0f104a97-9d3f-4472-a17d-4c6443224fb2",
+      "name": "envio-titulo",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        2768,
+        1600
+      ],
+      "webhookId": "4ee0f03e-b696-48a9-b8b8-aaa341e46b46",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "={{ $('atualizar-listing-titulo-descricao').first().json.generated_description }}",
+        "additionalFields": {}
+      },
+      "id": "2db4f4cf-f5c4-4a84-9ca3-0bafc28b0b63",
+      "name": "envio-descricao",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        3008,
+        1600
+      ],
+      "webhookId": "ef7ff0ca-1459-4763-ae46-4d08f9c29510",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let row;\ntry {\n  // caminho: geração nova (título/descrição acabaram de ser gerados/salvos)\n  row = $('atualizar-listing-titulo-descricao').first().json;\n} catch (e) {\n  // caminho: botão \"gerar de novo\" — lê o que já existe na listing\n  row = $('buscar-listing-para-regeneracao').first().json;\n}\n\nconst cc = $('buscar-vendedor').first().json.conversation_context;\nconst contexto = typeof cc === 'string' ? JSON.parse(cc || '{}') : (cc || {});\n\nreturn [{\n  json: {\n    listing_id: row.id,\n    generated_title: row.generated_title,\n    generated_description: row.generated_description,\n    original_photo_storage_url: row.original_photo_url,\n    nome_produto: contexto.nome_produto\n  }\n}];\n"
+      },
+      "id": "59c81d37-8014-4b2c-b060-2faeb1d02d1d",
+      "name": "preparar-para-imagens",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3248,
+        1600
+      ],
+      "notesInFlow": true,
+      "notes": "Convergência: recebe tanto de atualizar-listing-titulo-descricao (geração nova) quanto de buscar-listing-para-regeneracao (botão \"gerar de novo\")."
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.original_photo_storage_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "1fdd3e8f-0086-4b1a-a3cb-8e1a8ae0bf78",
+      "name": "baixar-foto-para-gerar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3488,
+        1600
+      ],
+      "notesInFlow": true,
+      "notes": "Sempre baixa de novo a partir do Storage (bucket público) — o binário baixado direto da Meta lá no início não sobrevive até aqui, porque no meio do caminho a execução pausou esperando o vendedor responder o nome (e/ou os detalhes) do produto."
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// gerar-prompts-gpt — manda o esqueleto das 8 cenas + o anúncio já\n// gerado (título/descrição) pro GPT, pede de volta um prompt customizado\n// por cena, em JSON. Copiado (estrutura do prompt e ESQUELETOS_CENAS) de\n// ml_test/test_pipeline_gpt_gemini.py, função gerar_prompts_customizados.\n// =====================================================================\n//\n// Por que Code node e não HTTP Request node: o texto da instrução inclui\n// as 8 regras_fixas inteiras (bastante texto, com aspas e quebras de\n// linha) — montar isso como string JS normal e mandar via\n// this.helpers.httpRequest é muito mais seguro contra erro de escaping\n// do que tentar encaixar tudo numa expressão de body JSON de um node.\n//\n// Segredo: OPENAI_API_KEY vem de uma variável de ambiente do container\n// ($env), definida no .env do Docker — Code node não anexa Credential\n// pela UI.\n\nconst ESQUELETOS_CENAS = [\n  {\n    nome: '1-foto-principal',\n    regras_fixas: 'Foto principal/capa do anúncio. Produto ocupando OBRIGATORIAMENTE cerca de 80% da área da imagem, fundo branco puro (#FFFFFF), still de estúdio, luz suave e uniforme, sem sombra dura, altíssima fidelidade aos detalhes reais do produto (cor, forma, textura, rótulo). SEM texto sobreposto, SEM elemento gráfico extra — é a foto \\'limpa\\' de catálogo. Não adicionar acessório, marca ou função inexistente. Quadrado 1:1.',\n    is_cover: true\n  },\n  {\n    nome: '2-problema-que-resolve',\n    regras_fixas: 'Cena publicitária quadrada que comunica visualmente O PROBLEMA/A DOR que esse produto resolve (ex: dificuldade, esforço, incômodo do dia a dia relacionado à categoria do produto) — SEM o produto em cena, ou com o produto discretamente à margem. Incluir um texto curto ON-IMAGE (título de 3-6 palavras) nomeando o problema, de forma honesta e baseada só no que é plausível pra essa categoria de produto (não inventar estatística, nem alegar um problema que o produto não resolve de fato). Tom visual de campanha, iluminação profissional. Texto em português correto, sem erro de ortografia. Quadrado 1:1.'\n  },\n  {\n    nome: '3-beneficios-principais',\n    regras_fixas: 'Cartaz de benefícios quadrado, título grande de impacto no topo. Abaixo, 3-4 blocos com ícone line-icon + frase curta QUALITATIVA descrevendo um benefício real do produto (nunca número/medida/certificação inventada) — ESSE TEXTO PRECISA ESTAR ESCRITO NA IMAGEM, grande e legível, não só sugerido visualmente. Produto em destaque visual (grande, bem iluminado). Paleta coerente com a categoria. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '4-como-funciona',\n    regras_fixas: 'Infográfico técnico premium quadrado, mostrando o produto sendo usado corretamente. EXATAMENTE 3 colunas verticais isoladas (sem nenhum elemento cruzando entre colunas), numeradas 01/02/03, cada uma com no máximo 1 mão humana interagindo com o produto. Título \\'COMO FUNCIONA\\' sem acento, grande, ON-IMAGE. Uma palavra curta em caixa alta abaixo de cada coluna (sem acentuação, ortografia revisada). Mãos adultas realistas, sem deformação. Não inventar peças/funções. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '5-detalhes-premium',\n    regras_fixas: 'Still de close-up/macro quadrado, mostrando com riqueza de detalhe o acabamento, material e textura REAIS do produto (zoom em uma parte específica visível na foto de referência — nunca inventar um detalhe que não está lá). 2-3 linhas de chamada finas apontando pra características visíveis, com rótulo curto e QUALITATIVO ESCRITO NA IMAGEM (ex: \\'acabamento resistente\\', \\'encaixe preciso\\') — nunca número/medida/certificação inventada. Iluminação de estúdio, fundo neutro. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '6-pessoa-real-usando',\n    regras_fixas: 'Fotografia publicitária realista de uma pessoa real (adulta, anatomicamente correta, mãos sem deformação) usando o produto em sua função real, ambiente coerente com a categoria, luz natural, enquadramento fechado na interação pessoa-produto. Não inventar peça ou função. Sem texto sobreposto nesta cena (o objetivo aqui é transmitir confiança/realismo, não informação escrita). Quadrado 1:1.'\n  },\n  {\n    nome: '7-comparacao-antes-depois',\n    regras_fixas: 'Imagem quadrada dividida em 2 metades lado a lado (SEM sobreposição entre as metades). Lado esquerdo: cenário representando a dificuldade/situação SEM o produto (rotulado \\'ANTES\\' ou \\'SEM\\', em português, ON-IMAGE, texto pequeno e discreto). Lado direito: mesma situação já resolvida COM o produto em uso (rotulado \\'DEPOIS\\' ou \\'COM\\'). NÃO alegar percentuais, tempo economizado ou qualquer resultado quantificado — é uma comparação qualitativa de situação, não uma alegação de performance mensurável. Linha divisória nítida entre os dois lados. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '8-medidas-reais',\n    regras_fixas: 'Imagem quadrada de referência de tamanho do produto. SE E SOMENTE SE a descrição do produto fornecida abaixo contiver uma medida/dimensão real confirmada, mostrar um diagrama com linhas de medida e ESSE NÚMERO REAL escrito ON-IMAGE. SE NÃO houver medida real confirmada na descrição, NÃO INVENTAR NENHUM NÚMERO — em vez disso, gerar uma \\'referência de escala visual\\': o produto posicionado ao lado de um objeto cotidiano comum e reconhecível (ex: uma mão humana, um celular, uma moeda — escolha o que for proporcionalmente coerente com o tamanho provável da categoria do produto), sem nenhum número impresso, só a comparação visual de tamanho. Fundo neutro, iluminação de estúdio. Texto em português correto (se houver). Quadrado 1:1.'\n  }\n];\n\nconst nomeProduto = $('preparar-para-imagens').first().json.nome_produto;\nconst tituloGerado = $('preparar-para-imagens').first().json.generated_title;\nconst descricaoGerada = $('preparar-para-imagens').first().json.generated_description;\nconst descricaoProduto = `Título do anúncio: ${tituloGerado}\\n\\nDescrição do anúncio:\\n${descricaoGerada}`;\n\nconst esqueletosTexto = ESQUELETOS_CENAS\n  .map(c => `CENA \"${c.nome}\": ${c.regras_fixas}`)\n  .join('\\n\\n');\n\nconst instrucao = `Você escreve prompts de geração de imagem para o modelo Gemini (Google), para anúncios de e-commerce no Mercado Livre.\n\nProduto: ${nomeProduto}\nDescrição real do produto (use como base factual, não invente além disso — inclua aqui qualquer medida/dimensão real que você souber, pra cena 8 poder usá-la; se não souber nenhuma medida real, não invente):\n${descricaoProduto}\n\nAbaixo estão 8 \"esqueletos\" de cena, na ORDEM EXATA em que devem aparecer no anúncio, cada um com REGRAS FIXAS já calibradas em testes anteriores para evitar bugs visuais conhecidos (objetos se fundindo, texto com erro de ortografia, dados numéricos inventados, selos de certificação falsos). Sua tarefa: para cada cena, escrever um prompt final em português, específico para ESTE produto (usando a descrição real acima), MANTENDO INTEGRALMENTE todas as regras fixas listadas — você pode adicionar detalhes específicos do produto, mas NUNCA remover ou enfraquecer uma regra fixa, e NUNCA inventar número/medida/certificação que não esteja na descrição fornecida.\n\nREGRA GERAL IMPORTANTE (vale pra todas as cenas que pedem texto on-image): o texto/dado central de cada cena precisa aparecer ESCRITO DE FORMA VISÍVEL NA PRÓPRIA IMAGEM, não apenas sugerido visualmente — feedback real de uso mostrou que o comprador absorve muito mais informação do texto embutido na imagem do que da legenda separada.\n\n${esqueletosTexto}\n\nResponda em JSON, formato exato:\n{\"cenas\": [{\"nome\": \"...\", \"prompt_final\": \"...\"}, ...]}\nUma entrada por cena, na mesma ordem, usando o mesmo \"nome\" de cada uma.`;\n\nconst resposta = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.openai.com/v1/chat/completions',\n  headers: {\n    Authorization: `Bearer ${$env.OPENAI_API_KEY}`,\n    'Content-Type': 'application/json'\n  },\n  body: {\n    model: 'gpt-4.1',\n    messages: [{ role: 'user', content: instrucao }],\n    response_format: { type: 'json_object' }\n  },\n  json: true\n});\n\nconst dados = JSON.parse(resposta.choices[0].message.content);\nconst prompts = {};\nfor (const c of dados.cenas) { prompts[c.nome] = c.prompt_final; }\n\nreturn [{ json: { prompts } }];\n"
+      },
+      "id": "b4a1505d-821e-431e-ae2d-7875695e4a3d",
+      "name": "gerar-prompts-gpt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3728,
+        1600
+      ],
+      "notesInFlow": true,
+      "notes": "Modelo de texto: gpt-4.1 (copiado de MODEL_TEXTO_OPENAI no script de referência — o próprio script já avisa que pode precisar trocar se o nome do modelo mudar na sua conta OpenAI). Diferença deliberada em relação ao script original: aqui a \"descrição do produto\" que alimenta o prompt é o generated_title+generated_description (o anúncio já pronto), não a descrição factual crua — é o que o bloco (c) pediu explicitamente (\"usando o título/descrição gerados\"), enquanto o script de teste standalone usava a descrição crua da busca. Estrutura do prompt e os esqueletos das 8 cenas são copiados do script, sem alteração."
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// gerar-8-fotos-customizadas — gera as 8 variações da foto do produto\n// via Gemini, uma chamada por cena, usando o prompt_final que o GPT\n// escreveu pra cada uma (node anterior) + a foto original como imagem de\n// referência. Estrutura do prompt completo (preâmbulo fixo + prompt_final)\n// copiada de ml_test/test_pipeline_gpt_gemini.py.\n// =====================================================================\n\nconst ESQUELETOS_CENAS = [\n  {\n    nome: '1-foto-principal',\n    regras_fixas: 'Foto principal/capa do anúncio. Produto ocupando OBRIGATORIAMENTE cerca de 80% da área da imagem, fundo branco puro (#FFFFFF), still de estúdio, luz suave e uniforme, sem sombra dura, altíssima fidelidade aos detalhes reais do produto (cor, forma, textura, rótulo). SEM texto sobreposto, SEM elemento gráfico extra — é a foto \\'limpa\\' de catálogo. Não adicionar acessório, marca ou função inexistente. Quadrado 1:1.',\n    is_cover: true\n  },\n  {\n    nome: '2-problema-que-resolve',\n    regras_fixas: 'Cena publicitária quadrada que comunica visualmente O PROBLEMA/A DOR que esse produto resolve (ex: dificuldade, esforço, incômodo do dia a dia relacionado à categoria do produto) — SEM o produto em cena, ou com o produto discretamente à margem. Incluir um texto curto ON-IMAGE (título de 3-6 palavras) nomeando o problema, de forma honesta e baseada só no que é plausível pra essa categoria de produto (não inventar estatística, nem alegar um problema que o produto não resolve de fato). Tom visual de campanha, iluminação profissional. Texto em português correto, sem erro de ortografia. Quadrado 1:1.'\n  },\n  {\n    nome: '3-beneficios-principais',\n    regras_fixas: 'Cartaz de benefícios quadrado, título grande de impacto no topo. Abaixo, 3-4 blocos com ícone line-icon + frase curta QUALITATIVA descrevendo um benefício real do produto (nunca número/medida/certificação inventada) — ESSE TEXTO PRECISA ESTAR ESCRITO NA IMAGEM, grande e legível, não só sugerido visualmente. Produto em destaque visual (grande, bem iluminado). Paleta coerente com a categoria. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '4-como-funciona',\n    regras_fixas: 'Infográfico técnico premium quadrado, mostrando o produto sendo usado corretamente. EXATAMENTE 3 colunas verticais isoladas (sem nenhum elemento cruzando entre colunas), numeradas 01/02/03, cada uma com no máximo 1 mão humana interagindo com o produto. Título \\'COMO FUNCIONA\\' sem acento, grande, ON-IMAGE. Uma palavra curta em caixa alta abaixo de cada coluna (sem acentuação, ortografia revisada). Mãos adultas realistas, sem deformação. Não inventar peças/funções. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '5-detalhes-premium',\n    regras_fixas: 'Still de close-up/macro quadrado, mostrando com riqueza de detalhe o acabamento, material e textura REAIS do produto (zoom em uma parte específica visível na foto de referência — nunca inventar um detalhe que não está lá). 2-3 linhas de chamada finas apontando pra características visíveis, com rótulo curto e QUALITATIVO ESCRITO NA IMAGEM (ex: \\'acabamento resistente\\', \\'encaixe preciso\\') — nunca número/medida/certificação inventada. Iluminação de estúdio, fundo neutro. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '6-pessoa-real-usando',\n    regras_fixas: 'Fotografia publicitária realista de uma pessoa real (adulta, anatomicamente correta, mãos sem deformação) usando o produto em sua função real, ambiente coerente com a categoria, luz natural, enquadramento fechado na interação pessoa-produto. Não inventar peça ou função. Sem texto sobreposto nesta cena (o objetivo aqui é transmitir confiança/realismo, não informação escrita). Quadrado 1:1.'\n  },\n  {\n    nome: '7-comparacao-antes-depois',\n    regras_fixas: 'Imagem quadrada dividida em 2 metades lado a lado (SEM sobreposição entre as metades). Lado esquerdo: cenário representando a dificuldade/situação SEM o produto (rotulado \\'ANTES\\' ou \\'SEM\\', em português, ON-IMAGE, texto pequeno e discreto). Lado direito: mesma situação já resolvida COM o produto em uso (rotulado \\'DEPOIS\\' ou \\'COM\\'). NÃO alegar percentuais, tempo economizado ou qualquer resultado quantificado — é uma comparação qualitativa de situação, não uma alegação de performance mensurável. Linha divisória nítida entre os dois lados. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '8-medidas-reais',\n    regras_fixas: 'Imagem quadrada de referência de tamanho do produto. SE E SOMENTE SE a descrição do produto fornecida abaixo contiver uma medida/dimensão real confirmada, mostrar um diagrama com linhas de medida e ESSE NÚMERO REAL escrito ON-IMAGE. SE NÃO houver medida real confirmada na descrição, NÃO INVENTAR NENHUM NÚMERO — em vez disso, gerar uma \\'referência de escala visual\\': o produto posicionado ao lado de um objeto cotidiano comum e reconhecível (ex: uma mão humana, um celular, uma moeda — escolha o que for proporcionalmente coerente com o tamanho provável da categoria do produto), sem nenhum número impresso, só a comparação visual de tamanho. Fundo neutro, iluminação de estúdio. Texto em português correto (se houver). Quadrado 1:1.'\n  }\n];\nconst MODEL = 'gemini-3.1-flash-image';\n\nconst promptsPorNome = $('gerar-prompts-gpt').first().json.prompts;\nconst fotoOrigem = $('baixar-foto-para-gerar').first().binary.data;\nconst fotoBase64 = fotoOrigem.data;\nconst mimeTypeOrigem = fotoOrigem.mimeType || 'image/jpeg';\n\nasync function chamarGemini(promptCompleto, imageConfig) {\n  return this.helpers.httpRequest({\n    method: 'POST',\n    url: `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,\n    headers: {\n      'x-goog-api-key': $env.GEMINI_API_KEY,\n      'Content-Type': 'application/json'\n    },\n    body: {\n      contents: [{\n        parts: [\n          { text: promptCompleto },\n          { inline_data: { mime_type: mimeTypeOrigem, data: fotoBase64 } }\n        ]\n      }],\n      generationConfig: {\n        responseModalities: ['IMAGE'],\n        imageConfig\n      }\n    },\n    json: true\n  });\n}\n\nasync function gerarCena(esqueleto) {\n  const promptFinal = promptsPorNome[esqueleto.nome];\n  if (!promptFinal) {\n    throw new Error(`GPT não devolveu prompt para a cena \"${esqueleto.nome}\"`);\n  }\n\n  const promptCompleto = `Usando a imagem de referência do produto anexada, gere uma nova foto do MESMO produto exato (preserve rigorosamente cor, formato, proporções, rótulos e texturas reais do objeto — não invente detalhes que o produto não tem). ${promptFinal}`;\n\n  let resposta;\n  try {\n    resposta = await chamarGemini.call(this, promptCompleto, { aspectRatio: '1:1', imageSize: '2K' });\n  } catch (e) {\n    // image_size \"2K\" pode não ser aceito — tenta de novo sem ele (fica em 1K).\n    resposta = await chamarGemini.call(this, promptCompleto, { aspectRatio: '1:1' });\n  }\n\n  const partes = resposta?.candidates?.[0]?.content?.parts ?? [];\n  const parteImagem = partes.find(p => p.inlineData || p.inline_data);\n  const inline = parteImagem?.inlineData ?? parteImagem?.inline_data;\n\n  if (!inline) {\n    throw new Error(`Gemini não retornou imagem para a cena \"${esqueleto.nome}\": ${JSON.stringify(resposta).slice(0, 500)}`);\n  }\n\n  return {\n    json: { scene: esqueleto.nome, is_cover: !!esqueleto.is_cover },\n    binary: {\n      imagem: {\n        data: inline.data,\n        mimeType: inline.mimeType ?? inline.mime_type ?? 'image/png',\n        fileName: `${esqueleto.nome}.png`\n      }\n    }\n  };\n}\n\nreturn Promise.all(ESQUELETOS_CENAS.map(esqueleto => gerarCena.call(this, esqueleto)));\n"
+      },
+      "id": "bd9f62aa-81fb-481b-995c-b59cb59bd844",
+      "name": "gerar-8-fotos-customizadas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3968,
+        1600
+      ],
+      "notesInFlow": true,
+      "notes": "Modelo: gemini-3.1-flash-image (copiado de MODEL_IMAGEM_GEMINI no script de referência). Tenta image_size \"2K\" primeiro; se o Gemini rejeitar o parâmetro, tenta de novo sem ele (fica em 1K — resolução padrão, que já supera o mínimo de 1200x1200 recomendado pelo Mercado Livre). 8 chamadas em paralelo (Promise.all), mesma razão de sempre: não estourar tempo de execução do N8N."
+    },
+    {
+      "parameters": {
+        "jsCode": "const SUPABASE_URL = $env.SUPABASE_URL;\nconst BUCKET = $env.SUPABASE_STORAGE_BUCKET || 'listing-photos';\n\nconst listingId = $('preparar-para-imagens').first().json.listing_id;\nconst geradas = $input.all(); // 8 items de gerar-8-fotos-customizadas\n\nasync function subir(caminho, binario) {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${caminho}`,\n    headers: {\n      apikey: $env.SUPABASE_SERVICE_ROLE_KEY,\n      Authorization: `Bearer ${$env.SUPABASE_SERVICE_ROLE_KEY}`,\n      'Content-Type': binario.mimeType,\n      'x-upsert': 'true'\n    },\n    body: Buffer.from(binario.data, 'base64')\n  });\n  return `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${caminho}`;\n}\n\nconst generatedPhotos = await Promise.all(\n  geradas.map(async (item) => {\n    const caminho = `${listingId}/${item.json.scene}.png`;\n    const url = await subir.call(this, caminho, item.binary.imagem);\n    return { url, scene: item.json.scene, is_cover: item.json.is_cover };\n  })\n);\n\nreturn [{ json: { listing_id: listingId, generated_photos: generatedPhotos } }];\n"
+      },
+      "id": "628b3dbf-8296-4465-a923-97e7049ee62f",
+      "name": "salvar-fotos-storage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4208,
+        1600
+      ],
+      "notesInFlow": true,
+      "notes": "Só as 8 geradas — a original já está no Storage desde salvar-foto-original-storage, não precisa subir de novo. Uploads em paralelo."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE listings\nSET generated_photos = $1::jsonb,\n    status = 'rascunho'\nWHERE id = $2;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json.generated_photos), $json.listing_id] }}"
+        }
+      },
+      "id": "d4e66445-6347-4e79-a381-230586256c1f",
+      "name": "atualizar-listing-fotos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        4448,
+        1600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('parse-mensagem').first().json.phone_number_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('salvar-fotos-storage').first().json.generated_photos[0].url }}\" }\n}",
+        "options": {}
+      },
+      "id": "38b9029f-1bdc-43e2-ada4-3f6b207bbfbc",
+      "name": "envio-foto-1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4688,
+        1440
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      },
+      "notes": "8 mensagens de imagem separadas, encadeadas em sequência (ordem das cenas 1 a 8) pra chegar em ordem no WhatsApp."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('parse-mensagem').first().json.phone_number_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('salvar-fotos-storage').first().json.generated_photos[1].url }}\" }\n}",
+        "options": {}
+      },
+      "id": "4e8423fc-04c7-4830-934c-ac412570c52e",
+      "name": "envio-foto-2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4688,
+        1504
       ],
       "credentials": {
         "whatsAppApi": {
-          "id": "REPLACE_ME_ENVIO",
-          "name": "WhatsApp Business Cloud (envio)"
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('parse-mensagem').first().json.phone_number_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('salvar-fotos-storage').first().json.generated_photos[2].url }}\" }\n}",
+        "options": {}
+      },
+      "id": "1d7db455-1627-4950-9dd9-29dc62dc344b",
+      "name": "envio-foto-3",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4688,
+        1568
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('parse-mensagem').first().json.phone_number_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('salvar-fotos-storage').first().json.generated_photos[3].url }}\" }\n}",
+        "options": {}
+      },
+      "id": "41658f54-f8f2-437d-beeb-c0975c4686db",
+      "name": "envio-foto-4",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4688,
+        1632
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('parse-mensagem').first().json.phone_number_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('salvar-fotos-storage').first().json.generated_photos[4].url }}\" }\n}",
+        "options": {}
+      },
+      "id": "e42f42f1-432d-4338-8f1d-664c41e08e82",
+      "name": "envio-foto-5",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4688,
+        1680
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('parse-mensagem').first().json.phone_number_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('salvar-fotos-storage').first().json.generated_photos[5].url }}\" }\n}",
+        "options": {}
+      },
+      "id": "28dc53c4-9afd-4fda-88e2-3aae747d9b68",
+      "name": "envio-foto-6",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4688,
+        1744
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('parse-mensagem').first().json.phone_number_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('salvar-fotos-storage').first().json.generated_photos[6].url }}\" }\n}",
+        "options": {}
+      },
+      "id": "3fac2fb6-e838-41d0-ab72-2b391e92c86e",
+      "name": "envio-foto-7",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4688,
+        1808
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('parse-mensagem').first().json.phone_number_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('salvar-fotos-storage').first().json.generated_photos[7].url }}\" }\n}",
+        "options": {}
+      },
+      "id": "5277bc85-62e1-4fb1-8583-c9f017f30f9e",
+      "name": "envio-foto-8",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4688,
+        1872
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('parse-mensagem').first().json.phone_number_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"interactive\",\n  \"interactive\": {\n    \"type\": \"button\",\n    \"body\": { \"text\": \"O que você quer fazer com esse anúncio?\" },\n    \"action\": {\n      \"buttons\": [\n        { \"type\": \"reply\", \"reply\": { \"id\": \"aprovar\", \"title\": \"Aprovar\" } },\n        { \"type\": \"reply\", \"reply\": { \"id\": \"gerar_novamente\", \"title\": \"Gerar de novo\" } },\n        { \"type\": \"reply\", \"reply\": { \"id\": \"editar\", \"title\": \"Editar manualmente\" } }\n      ]\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "7be66521-8f9a-4a64-947d-c312e78bf17d",
+      "name": "enviar-botoes-aprovacao",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4928,
+        1904
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      },
+      "notes": "O node nativo WhatsApp Business Cloud do N8N não suporta mensagens interativas (Reply Buttons) — por isso é HTTP Request direto pra Graph API."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sellers\nSET conversation_state = 'aguardando_aprovacao',\n    conversation_context = jsonb_build_object(\n      'listing_id', $1::text,\n      'original_photo_storage_url', $2,\n      'nome_produto', $3::text\n    ),\n    updated_at = now()\nWHERE id = $4;",
+        "options": {
+          "queryReplacement": "={{ [$('preparar-para-imagens').first().json.listing_id, $('preparar-para-imagens').first().json.original_photo_storage_url, $('preparar-para-imagens').first().json.nome_produto, $('buscar-vendedor').first().json.id] }}"
+        }
+      },
+      "id": "aff0e9f3-ed41-46ec-b8c1-dec998ad2950",
+      "name": "atualizar-estado-aprovacao",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        5168,
+        1904
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "postgres": {
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "conversation_context é reescrito aqui — precisa incluir nome_produto de novo (senão se perderia), além de listing_id + URL da foto original, pro \"gerar de novo\" continuar funcionando depois."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-botao-aprovar",
+                    "leftValue": "={{ $('parse-mensagem').first().json.botao_id }}",
+                    "rightValue": "aprovar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "aprovar"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-botao-gerar-novamente",
+                    "leftValue": "={{ $('parse-mensagem').first().json.botao_id }}",
+                    "rightValue": "gerar_novamente",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "gerar_novamente"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-botao-editar",
+                    "leftValue": "={{ $('parse-mensagem').first().json.botao_id }}",
+                    "rightValue": "editar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "editar"
+            }
+          ]
+        },
+        "looseTypeValidation": true,
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "nao_e_botao"
+        }
+      },
+      "id": "3ec11794-5f57-4d42-9d9e-08782452fe6d",
+      "name": "rotear-botao-aprovacao",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        608,
+        2320
+      ],
+      "notesInFlow": true,
+      "notes": "botao_id vem do parse-mensagem (extraído do interactive.button_reply.id). Mensagem que não é resposta de botão cai no fallback nao_e_botao."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sellers\nSET conversation_state = 'aguardando_oauth_ml',\n    updated_at = now()\nWHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$('buscar-vendedor').first().json.id] }}"
+        }
+      },
+      "id": "ce1944a7-eed1-4197-a839-0bcbdd56d46a",
+      "name": "atualizar-estado-oauth",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        848,
+        2160
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "Aprovado! ✅ A publicação no Mercado Livre ainda não está implementada nesta fase do desenvolvimento — isso é o próximo bloco.",
+        "additionalFields": {}
+      },
+      "id": "462361c6-bcb5-4902-9a74-fe22598df3f6",
+      "name": "resp-aprovar",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1088,
+        2160
+      ],
+      "webhookId": "b6332f7c-280b-480a-af89-d8c6ffcdb477",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, generated_title, generated_description, original_photo_url\nFROM listings\nWHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$('buscar-vendedor').first().json.conversation_context.listing_id] }}"
+        }
+      },
+      "id": "59cae26a-e6be-4487-b8de-4de3ecb47803",
+      "name": "buscar-listing-para-regeneracao",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        848,
+        2320
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "postgres": {
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "Título/descrição NÃO são regerados em \"gerar de novo\" — só as 8 fotos. Por isso lê o que já existe em vez de gerar de novo."
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "Edição manual do título/descrição ainda não está implementada nesta fase do desenvolvimento.",
+        "additionalFields": {}
+      },
+      "id": "df9d2397-82b8-4114-a00a-0085bc94e911",
+      "name": "resp-editar",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        848,
+        2480
+      ],
+      "webhookId": "1d10b9d7-44af-40c6-97ba-656d04a09437",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "Usa um dos botões da mensagem anterior (Aprovar / Gerar de novo / Editar manualmente) pra eu continuar 🙂",
+        "additionalFields": {}
+      },
+      "id": "30b332fc-75e0-4e26-8a9b-f52c443a0d31",
+      "name": "resp-usar-botoes",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        848,
+        2624
+      ],
+      "webhookId": "f50be295-3a66-4895-8e5b-d17736f56201",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
         }
       }
     }
   ],
+  "pinData": {},
   "connections": {
     "WhatsApp Trigger": {
       "main": [
@@ -548,7 +1715,7 @@
         ],
         [
           {
-            "node": "resp-etapa-avancada",
+            "node": "rotear-botao-aprovacao",
             "type": "main",
             "index": 0
           }
@@ -570,6 +1737,20 @@
         [
           {
             "node": "resp-etapa-avancada",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "salvar-nome-produto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "salvar-detalhes-produto",
             "type": "main",
             "index": 0
           }
@@ -605,18 +1786,442 @@
       "main": [
         [
           {
-            "node": "atualizar-estado",
+            "node": "buscar-url-media",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "atualizar-estado": {
+    "buscar-url-media": {
       "main": [
         [
           {
-            "node": "resp-foto-recebida",
+            "node": "baixar-foto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "baixar-foto": {
+      "main": [
+        [
+          {
+            "node": "salvar-foto-original-storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "salvar-foto-original-storage": {
+      "main": [
+        [
+          {
+            "node": "atualizar-listing-foto-original",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "atualizar-listing-foto-original": {
+      "main": [
+        [
+          {
+            "node": "perguntar-nome-produto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "perguntar-nome-produto": {
+      "main": [
+        [
+          {
+            "node": "atualizar-estado-nome-produto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "salvar-nome-produto": {
+      "main": [
+        [
+          {
+            "node": "ack-processando-1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ack-processando-1": {
+      "main": [
+        [
+          {
+            "node": "buscar-info-produto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "buscar-info-produto": {
+      "main": [
+        [
+          {
+            "node": "avaliar-grounding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "avaliar-grounding": {
+      "main": [
+        [
+          {
+            "node": "grounding-confiavel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "grounding-confiavel": {
+      "main": [
+        [
+          {
+            "node": "gerar-titulo-descricao",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "perguntar-detalhes-produto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "perguntar-detalhes-produto": {
+      "main": [
+        [
+          {
+            "node": "atualizar-estado-detalhes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "salvar-detalhes-produto": {
+      "main": [
+        [
+          {
+            "node": "ack-processando-2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ack-processando-2": {
+      "main": [
+        [
+          {
+            "node": "preparar-conteudo-vendedor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "preparar-conteudo-vendedor": {
+      "main": [
+        [
+          {
+            "node": "gerar-titulo-descricao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "gerar-titulo-descricao": {
+      "main": [
+        [
+          {
+            "node": "montar-titulo-descricao-final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "montar-titulo-descricao-final": {
+      "main": [
+        [
+          {
+            "node": "atualizar-listing-titulo-descricao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "atualizar-listing-titulo-descricao": {
+      "main": [
+        [
+          {
+            "node": "envio-titulo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "envio-titulo": {
+      "main": [
+        [
+          {
+            "node": "envio-descricao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "envio-descricao": {
+      "main": [
+        [
+          {
+            "node": "preparar-para-imagens",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "buscar-listing-para-regeneracao": {
+      "main": [
+        [
+          {
+            "node": "preparar-para-imagens",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "preparar-para-imagens": {
+      "main": [
+        [
+          {
+            "node": "baixar-foto-para-gerar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "baixar-foto-para-gerar": {
+      "main": [
+        [
+          {
+            "node": "gerar-prompts-gpt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "gerar-prompts-gpt": {
+      "main": [
+        [
+          {
+            "node": "gerar-8-fotos-customizadas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "gerar-8-fotos-customizadas": {
+      "main": [
+        [
+          {
+            "node": "salvar-fotos-storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "salvar-fotos-storage": {
+      "main": [
+        [
+          {
+            "node": "atualizar-listing-fotos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "atualizar-listing-fotos": {
+      "main": [
+        [
+          {
+            "node": "envio-foto-1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "envio-foto-1": {
+      "main": [
+        [
+          {
+            "node": "envio-foto-2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "envio-foto-2": {
+      "main": [
+        [
+          {
+            "node": "envio-foto-3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "envio-foto-3": {
+      "main": [
+        [
+          {
+            "node": "envio-foto-4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "envio-foto-4": {
+      "main": [
+        [
+          {
+            "node": "envio-foto-5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "envio-foto-5": {
+      "main": [
+        [
+          {
+            "node": "envio-foto-6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "envio-foto-6": {
+      "main": [
+        [
+          {
+            "node": "envio-foto-7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "envio-foto-7": {
+      "main": [
+        [
+          {
+            "node": "envio-foto-8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "envio-foto-8": {
+      "main": [
+        [
+          {
+            "node": "enviar-botoes-aprovacao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "enviar-botoes-aprovacao": {
+      "main": [
+        [
+          {
+            "node": "atualizar-estado-aprovacao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "rotear-botao-aprovacao": {
+      "main": [
+        [
+          {
+            "node": "atualizar-estado-oauth",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "buscar-listing-para-regeneracao",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "resp-editar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "resp-usar-botoes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "atualizar-estado-oauth": {
+      "main": [
+        [
+          {
+            "node": "resp-aprovar",
             "type": "main",
             "index": 0
           }
@@ -624,5 +2229,18 @@
       ]
     }
   },
-  "pinData": {}
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "3a689cb0-ebc4-4ca3-a338-a9ff81ce726d",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "7ddd863a3187472d11bf8c84c8b21f04e10a1e60b9758392b9bf5051599855c6"
+  },
+  "nodeGroups": [],
+  "id": "tpYyVL35YYT0G8Ko",
+  "tags": []
 }
