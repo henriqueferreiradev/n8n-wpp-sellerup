@@ -8,13 +8,13 @@
         ],
         "options": {}
       },
-      "id": "61d39a0e-5389-4f90-bb63-a3c8862bd85d",
+      "id": "a3535e41-ba17-4eea-8b0b-72cc8371890c",
       "name": "WhatsApp Trigger",
       "type": "n8n-nodes-base.whatsAppTrigger",
       "typeVersion": 1,
       "position": [
-        -1232,
-        1744
+        -1136,
+        3552
       ],
       "webhookId": "cf5bf28a-3af0-459e-8e99-08f901f7b7d1",
       "credentials": {
@@ -28,13 +28,13 @@
       "parameters": {
         "jsCode": "// =====================================================================\n// parse-mensagem — normaliza o payload cru da Meta em campos simples.\n// =====================================================================\n//\n// ESTRUTURA ASSUMIDA (WhatsApp Cloud API, campo de webhook \"messages\"):\n//\n//   {\n//     object: \"whatsapp_business_account\",\n//     entry: [{\n//       changes: [{\n//         value: {\n//           metadata: { phone_number_id, display_phone_number },\n//           contacts: [{ profile: { name }, wa_id }],\n//           messages: [{\n//             from: \"5521989511871\",   // sem \"+\"\n//             id: \"wamid....\",\n//             type: \"text\" | \"image\" | ...,\n//             text:  { body: \"...\" },\n//             image: { id: \"<media_id>\", mime_type, sha256 }\n//           }]\n//         }\n//       }]\n//     }]\n//   }\n//\n// O WhatsApp Trigger do n8n, dependendo da versão, entrega esse envelope\n// completo OU já desembrulhado em `value`. As duas formas são tratadas\n// abaixo — se o seu n8n entregar num formato diferente, olhe a saída crua\n// do trigger e ajuste `extrairValue()`.\n\n// A Meta manda webhooks de status (sent/delivered/read) no MESMO campo\n// \"messages\". Sem o filtro abaixo, cada resposta do bot dispararia o\n// workflow de novo, em loop.\nfunction extrairValue(body) {\n  if (!body || typeof body !== 'object') return null;\n  const doEnvelope = body?.entry?.[0]?.changes?.[0]?.value;\n  if (doEnvelope) return doEnvelope;\n  if (body.messages || body.statuses || body.metadata) return body;\n  return null;\n}\n\n// A Meta entrega o número sem \"+\" (5521989511871); o banco guarda em E.164.\nfunction paraE164(numero) {\n  const digitos = String(numero ?? '').replace(/\\D/g, '');\n  return digitos ? '+' + digitos : null;\n}\n\n// Gotcha conhecido de números brasileiros: a Meta às vezes entrega celulares\n// sem o 9º dígito (+5521989511871 chega como +552189511871). Geramos a outra\n// variante para o SELECT tentar as duas — senão o vendedor \"não existe\".\nfunction varianteNonoDigito(e164) {\n  if (!e164 || !e164.startsWith('+55')) return null;\n  const resto = e164.slice(3); // DDD + número\n  if (resto.length === 11 && resto[2] === '9') {\n    return '+55' + resto.slice(0, 2) + resto.slice(3); // tira o 9\n  }\n  if (resto.length === 10) {\n    return '+55' + resto.slice(0, 2) + '9' + resto.slice(2); // põe o 9\n  }\n  return null;\n}\n\nconst saida = [];\n\nfor (const item of $input.all()) {\n  const value = extrairValue(item.json);\n  if (!value) continue;\n\n  const mensagem = value?.messages?.[0];\n  if (!mensagem) continue; // status callback ou evento sem mensagem: ignora\n\n  const tipo = mensagem.type ?? 'desconhecido';\n  const numeroE164 = paraE164(mensagem.from);\n\n  saida.push({\n    json: {\n      // Número normalizado, usado para achar o vendedor no banco.\n      numero_remetente: numeroE164,\n      // Variante com/sem 9º dígito (cai no mesmo valor quando não se aplica,\n      // para o IN ($1, $2) do SELECT continuar válido).\n      numero_remetente_variante: varianteNonoDigito(numeroE164) ?? numeroE164,\n      // Número exatamente como a Meta mandou — é o que usamos para responder.\n      numero_remetente_raw: mensagem.from ?? null,\n\n      tipo_mensagem: tipo,\n      texto: tipo === 'text' ? (mensagem.text?.body ?? null) : null,\n      media_id: tipo === 'image' ? (mensagem.image?.id ?? null) : null,\n\n      // Resposta de um Reply Button (bloco c). Estrutura assumida do payload:\n      //   messages[0] = {\n      //     type: \"interactive\",\n      //     interactive: { type: \"button_reply\", button_reply: { id: \"aprovar\", title: \"Aprovar\" } }\n      //   }\n      // botao_id fica null para qualquer mensagem que não seja essa.\n      botao_id: tipo === 'interactive' ? (mensagem.interactive?.button_reply?.id ?? null) : null,\n\n      // Número DO BOT que recebeu a mensagem. Evita ter que colar o\n      // phone_number_id à mão em cada node de envio.\n      phone_number_id: value?.metadata?.phone_number_id ?? null,\n\n      nome_contato: value?.contacts?.[0]?.profile?.name ?? null,\n      wamid: mensagem.id ?? null\n    }\n  });\n}\n\n// Array vazio encerra a execução aqui (caso dos status callbacks).\nreturn saida;\n"
       },
-      "id": "2cd04ca0-5915-4e87-890a-010f46825457",
+      "id": "8134e77c-d5ce-4b83-977f-0a5d3716d902",
       "name": "parse-mensagem",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1008,
-        1744
+        -912,
+        3552
       ]
     },
     {
@@ -45,13 +45,13 @@
           "queryReplacement": "={{ [$json.numero_remetente, $json.numero_remetente_variante] }}"
         }
       },
-      "id": "2469de74-9042-484d-8010-27e3f05a8475",
+      "id": "ba59c52b-34d4-4e29-a5cb-08523346435c",
       "name": "buscar-vendedor",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        -800,
-        1744
+        -704,
+        3552
       ],
       "alwaysOutputData": true,
       "notesInFlow": true,
@@ -89,13 +89,13 @@
         "looseTypeValidation": true,
         "options": {}
       },
-      "id": "19319379-b493-4662-aeb1-e1117b5e0b6c",
+      "id": "3f4143cf-af48-49fa-bc46-22ee03ee93e1",
       "name": "vendedor-existe",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -576,
-        1744
+        -480,
+        3552
       ]
     },
     {
@@ -106,13 +106,13 @@
         "textBody": "Esse número ainda não está liberado para testar o sistema. Fala com o Henrique pra ser adicionado.",
         "additionalFields": {}
       },
-      "id": "4bf6c7c0-5f51-43da-9aa4-e5d5a2ec0114",
+      "id": "6ae16f2d-96a7-4504-b90f-78b03a2e9a74",
       "name": "resp-nao-liberado",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        -320,
-        1952
+        -224,
+        3760
       ],
       "webhookId": "b884770b-1f13-48fd-ad0b-fbf106a42a29",
       "credentials": {
@@ -326,13 +326,13 @@
           "renameFallbackOutput": "desconhecido"
         }
       },
-      "id": "c7addfed-6df0-4bdf-8902-933ef2d97074",
+      "id": "515998d3-361d-48ac-bbd1-33b90b733bfc",
       "name": "rotear-por-estado",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.2,
       "position": [
-        -320,
-        1568
+        -224,
+        3376
       ]
     },
     {
@@ -360,13 +360,13 @@
         "looseTypeValidation": true,
         "options": {}
       },
-      "id": "5b3d721d-900d-481a-94a0-01b64b631559",
+      "id": "f4493274-59be-4db0-afac-ddb98c849240",
       "name": "eh-imagem",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -80,
-        1328
+        16,
+        3136
       ]
     },
     {
@@ -377,13 +377,13 @@
           "queryReplacement": "={{ [$json.id, 'whatsapp_media:' + $('parse-mensagem').first().json.media_id] }}"
         }
       },
-      "id": "8cc9fc62-79ab-4e34-a682-f726184547ce",
+      "id": "d938c9af-c578-40bb-96bc-4f935f545ecd",
       "name": "criar-listing",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        176,
-        1248
+        272,
+        3056
       ],
       "notesInFlow": true,
       "credentials": {
@@ -402,13 +402,13 @@
         "textBody": "Manda uma foto do produto que você quer anunciar pra eu começar.",
         "additionalFields": {}
       },
-      "id": "0c6768e0-6abc-41ad-9abf-f2f4ae85e013",
+      "id": "7d810c2a-ff31-4b17-a0c5-10fa2a12019f",
       "name": "resp-pede-foto",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        176,
-        1440
+        272,
+        3248
       ],
       "webhookId": "24a3fe1d-c978-4ce2-a38d-914e058404ab",
       "credentials": {
@@ -426,13 +426,13 @@
         "textBody": "=Você já está numa etapa mais avançada do fluxo ({{ $json.conversation_state }}), que ainda não foi implementada nesta fase do desenvolvimento.",
         "additionalFields": {}
       },
-      "id": "c5ff87d7-31d5-422c-ae64-f9a4989fe90b",
+      "id": "37998703-03fd-4664-9bb5-c23244f814a6",
       "name": "resp-etapa-avancada",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        176,
-        1632
+        272,
+        3440
       ],
       "notesInFlow": true,
       "webhookId": "8a59d473-69f3-4cdb-ac2e-808fd8b386db",
@@ -452,13 +452,13 @@
         "textBody": "=Sua conversa está num estado que eu não reconheço ({{ $json.conversation_state }}) — provavelmente algo do desenvolvimento em andamento. Fala com o Henrique pra resetar.",
         "additionalFields": {}
       },
-      "id": "48c0a2c9-0dc7-4f93-85e4-c13d6bb3135c",
+      "id": "66e9434d-9572-4bec-bba0-eb9b9bdf7b55",
       "name": "resp-estado-desconhecido",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        176,
-        1808
+        272,
+        3616
       ],
       "webhookId": "53a71b14-bacb-4da9-b2e7-267c5f687249",
       "credentials": {
@@ -475,13 +475,13 @@
         "nodeCredentialType": "whatsAppApi",
         "options": {}
       },
-      "id": "60c4c834-8e0a-47ab-a0cc-6210ee86eaa7",
+      "id": "af36d288-accb-4233-9729-b104a520f4fe",
       "name": "buscar-url-media",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        608,
-        1040
+        704,
+        2848
       ],
       "notesInFlow": true,
       "credentials": {
@@ -505,13 +505,13 @@
           }
         }
       },
-      "id": "d3c76daa-8f0b-4291-a135-e0ca6ac9afbb",
+      "id": "fb8ee890-69c4-4740-963a-b7c7d199eb7a",
       "name": "baixar-foto",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        848,
-        1040
+        944,
+        2848
       ],
       "notesInFlow": true,
       "credentials": {
@@ -524,18 +524,59 @@
     },
     {
       "parameters": {
-        "jsCode": "// =====================================================================\n// salvar-foto-original-storage — sobe a foto original pro bucket do\n// Supabase Storage assim que ela chega, antes de perguntar o nome do\n// produto. Motivo: entre a foto chegar e o vendedor responder o nome do\n// produto pode passar bem mais que alguns minutos (é uma pausa esperando\n// resposta humana) — a URL temporária da Meta não sobrevive até lá, mas\n// uma URL do Storage sim.\n//\n// Segredos (SUPABASE_URL, SUPABASE_STORAGE_BUCKET, SUPABASE_SERVICE_ROLE_KEY)\n// vêm das variáveis de ambiente do container ($env), definidas no .env do\n// Docker — Code node não anexa Credential pela UI. Ver\n// docs/gemini-supabase-storage-setup.md.\n\nconst SUPABASE_URL = $env.SUPABASE_URL;\nconst BUCKET = $env.SUPABASE_STORAGE_BUCKET || 'listing-photos';\n\nconst listingId = $('criar-listing').first().json.id;\nconst item = $input.first();\nconst foto = item.binary.data;\nconst extensao = (foto.mimeType || 'image/jpeg').includes('png') ? 'png' : 'jpg';\nconst caminho = `${listingId}/original.${extensao}`;\n\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${caminho}`,\n  headers: {\n    apikey: $env.SUPABASE_SERVICE_ROLE_KEY,\n    Authorization: `Bearer ${$env.SUPABASE_SERVICE_ROLE_KEY}`,\n    'Content-Type': foto.mimeType,\n    'x-upsert': 'true'\n  },\n  body: Buffer.from(foto.data, 'base64')\n});\n\nreturn [{\n  json: {\n    listing_id: listingId,\n    original_photo_storage_url: `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${caminho}`\n  }\n}];\n"
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/storage/v1/object/{{ $env.SUPABASE_STORAGE_BUCKET || 'listing-photos' }}/{{ $('criar-listing').first().json.id }}/original.{{ ($binary.data.mimeType || 'image/jpeg').includes('png') ? 'png' : 'jpg' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "x-upsert",
+              "value": "true"
+            },
+            {
+              "name": "Content-Type",
+              "value": "={{ $binary.data.mimeType || 'image/jpeg' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
       },
-      "id": "2a8f224a-d475-4866-9348-f8e8c6015785",
-      "name": "salvar-foto-original-storage",
+      "id": "0b1dc9fd-9031-4f99-8097-ba3b869d66b8",
+      "name": "upload-foto-original-storage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1184,
+        2848
+      ],
+      "notesInFlow": true,
+      "notes": "Upload via HTTP Request NATIVO, de proposito. Nao voltar a fazer isso dentro de um Code node: com Task Runners ligado, this.helpers.httpRequest e proxied por RPC e um Buffer nao sobrevive a serializacao - o Storage recebia o texto {\"type\":\"Buffer\",\"data\":[...]} no lugar da imagem. Body Content Type = n8n Binary File le a propriedade binaria direto, sem Buffer."
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// montar-url-foto-original — monta a URL pública da foto original que o\n// node anterior (upload-foto-original-storage) acabou de subir.\n// =====================================================================\n//\n// Este node NÃO faz upload. O upload é do HTTP Request nativo anterior —\n// ver a nota daquele node: Buffer dentro de Code node não sobrevive ao RPC\n// do Task Runner e chegava corrompido no Storage.\n//\n// A URL é derivada do campo `Key` que o Supabase devolve na resposta do\n// upload (\"<bucket>/<caminho>\"), que é a fonte de verdade do que realmente\n// foi gravado — assim a URL salva no banco nunca diverge do arquivo real.\n// O fallback só existe caso a resposta venha vazia, e repete a mesma regra\n// de extensão usada na expressão de URL do node de upload.\n\nconst SUPABASE_URL = $env.SUPABASE_URL;\nconst BUCKET = $env.SUPABASE_STORAGE_BUCKET || 'listing-photos';\n\nconst listingId = $('criar-listing').first().json.id;\nconst key = $json.Key || $json.key || null;\n\nlet caminho;\nif (key) {\n  caminho = key.startsWith(BUCKET + '/') ? key.slice(BUCKET.length + 1) : key;\n} else {\n  const mime = $('baixar-foto').first().binary.data.mimeType || 'image/jpeg';\n  const extensao = mime.includes('png') ? 'png' : 'jpg';\n  caminho = `${listingId}/original.${extensao}`;\n}\n\nreturn [{\n  json: {\n    listing_id: listingId,\n    original_photo_storage_url: `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${caminho}`\n  }\n}];\n"
+      },
+      "id": "3ec51bf4-d1e5-4b23-a37a-9d3bef5603de",
+      "name": "montar-url-foto-original",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1088,
-        1040
+        1424,
+        2848
       ],
       "notesInFlow": true,
-      "notes": "Sobe só a foto original (as 8 geradas só existem depois que o nome do produto + pesquisa + GPT rodarem). URL pública salva em listings.original_photo_url e em conversation_context, pra sobreviver entre execuções."
+      "notes": "Só monta a URL pública (mesma saída de antes: listing_id + original_photo_storage_url). O upload agora é do node anterior."
     },
     {
       "parameters": {
@@ -545,13 +586,13 @@
           "queryReplacement": "={{ [$json.original_photo_storage_url, $json.listing_id] }}"
         }
       },
-      "id": "0fbd4280-fa34-440a-8553-ca7f6081c4e6",
+      "id": "1cae5b51-bcbe-479a-96a7-b902f1d8a2db",
       "name": "atualizar-listing-foto-original",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        1328,
-        1040
+        1664,
+        2848
       ],
       "credentials": {
         "postgres": {
@@ -568,13 +609,13 @@
         "textBody": "Recebi sua foto! 📸 Antes de gerar o anúncio, me conta: qual é o nome do produto?",
         "additionalFields": {}
       },
-      "id": "3714d78f-0247-4841-94d7-52d169807fe3",
+      "id": "63bcfa92-d8a2-42b9-8a6c-c12a24adf54d",
       "name": "perguntar-nome-produto",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        1568,
-        1040
+        1904,
+        2848
       ],
       "webhookId": "1df213e0-db9b-4814-a45b-3e56a779193a",
       "credentials": {
@@ -589,16 +630,16 @@
         "operation": "executeQuery",
         "query": "UPDATE sellers\nSET conversation_state = 'aguardando_nome_produto',\n    conversation_context = jsonb_build_object(\n      'listing_id', $1::text,\n      'original_photo_storage_url', $2\n    ),\n    updated_at = now()\nWHERE id = $3;",
         "options": {
-          "queryReplacement": "={{ [$('salvar-foto-original-storage').first().json.listing_id, $('salvar-foto-original-storage').first().json.original_photo_storage_url, $('buscar-vendedor').first().json.id] }}"
+          "queryReplacement": "={{ [$('montar-url-foto-original').first().json.listing_id, $('montar-url-foto-original').first().json.original_photo_storage_url, $('buscar-vendedor').first().json.id] }}"
         }
       },
-      "id": "3b5f966f-91a0-4b06-9ac1-29c82319408f",
+      "id": "c635fe4a-c5a1-4e69-8ab1-cf106ef0b85f",
       "name": "atualizar-estado-nome-produto",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        1808,
-        1040
+        2144,
+        2848
       ],
       "credentials": {
         "postgres": {
@@ -615,13 +656,13 @@
           "queryReplacement": "={{ [$('parse-mensagem').first().json.texto, $('buscar-vendedor').first().json.id] }}"
         }
       },
-      "id": "816bc5b6-2e08-49fa-80b7-4e2c7e2922c3",
+      "id": "b8db8611-b607-42b2-9b79-3e1fb51d3761",
       "name": "salvar-nome-produto",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        608,
-        1600
+        704,
+        3408
       ],
       "credentials": {
         "postgres": {
@@ -638,13 +679,13 @@
         "textBody": "Show! 🔎 Já estou pesquisando sobre o produto e montando o anúncio — te chamo assim que tiver tudo pronto.",
         "additionalFields": {}
       },
-      "id": "648b1d6d-c7cc-4b5d-b839-612246747b5c",
+      "id": "2fafeb41-a30f-45d5-a878-88d17d7948f4",
       "name": "ack-processando-1",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        848,
-        1600
+        944,
+        3408
       ],
       "webhookId": "6b5863dd-3b93-4610-a721-08f0fe7dd1e3",
       "credentials": {
@@ -674,13 +715,13 @@
         "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"Pesquise informações reais e verificáveis sobre este produto: \\\"{{ $('parse-mensagem').first().json.texto }}\\\". Preciso de um resumo factual, em português, adequado para escrever um anúncio de e-commerce: o que é, para que serve, materiais/características confirmadas, e qualquer medida ou especificação numérica que você conseguir confirmar com fonte. NÃO invente nenhum dado — se não encontrar uma informação, simplesmente não a inclua. Responda em texto corrido, sem markdown.\"\n    }]\n  }],\n  \"tools\": [{ \"google_search\": {} }]\n}",
         "options": {}
       },
-      "id": "39ea0025-e401-4e0f-b574-ba8456990024",
+      "id": "560e290b-d41e-4db6-9474-4897f35324ad",
       "name": "buscar-info-produto",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1088,
-        1600
+        1184,
+        3408
       ],
       "notesInFlow": true,
       "retryOnFail": true,
@@ -697,13 +738,13 @@
       "parameters": {
         "jsCode": "const resposta = $json;\nconst candidato = resposta.candidates?.[0];\nconst chunks = candidato?.groundingMetadata?.groundingChunks ?? [];\nconst texto = (candidato?.content?.parts ?? []).map(p => p.text).filter(Boolean).join('\\n');\nconst confiante = chunks.length > 0 && texto.trim().length > 0;\n\nreturn [{\n  json: {\n    confiante,\n    descricao_base: texto,\n    fonte: 'busca',\n    nome_produto: $('parse-mensagem').first().json.texto\n  }\n}];\n"
       },
-      "id": "e85f9df1-d245-4281-a781-e7f2bdc041fe",
+      "id": "e99b363d-df30-4bd5-93c7-bda2bc021a38",
       "name": "avaliar-grounding",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1328,
-        1600
+        1424,
+        3408
       ],
       "notesInFlow": true,
       "notes": "confiante = true só quando o Gemini realmente ancorou a resposta em resultados de busca (groundingChunks não vazio) E devolveu texto. Sem isso, cai no caminho de perguntar detalhes pro vendedor."
@@ -734,13 +775,13 @@
         "looseTypeValidation": true,
         "options": {}
       },
-      "id": "c9ad6454-8282-407a-8907-a2eba5cbc880",
+      "id": "00535657-0566-418d-a7ea-c8ffddcb6d02",
       "name": "grounding-confiavel",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1568,
-        1600
+        1664,
+        3408
       ],
       "notesInFlow": true,
       "notes": "true → segue direto pra geração de título/descrição. false → pergunta detalhes extras pro vendedor antes de continuar."
@@ -753,13 +794,13 @@
         "textBody": "Não achei muita informação sobre esse produto na internet. Pode me contar rapidinho as principais características dele? (material, pra que serve, algum diferencial)",
         "additionalFields": {}
       },
-      "id": "6151a817-de26-4dda-a677-419f058e657a",
+      "id": "0c1b5233-be20-4707-a490-ff5479a6ac20",
       "name": "perguntar-detalhes-produto",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        1808,
-        1744
+        1904,
+        3552
       ],
       "webhookId": "b0edd03f-eb2e-4a15-9634-40e8e2ebde99",
       "credentials": {
@@ -777,13 +818,13 @@
           "queryReplacement": "={{ [$('buscar-vendedor').first().json.id] }}"
         }
       },
-      "id": "744658e0-5b6b-481b-aba3-359e2acf7aa2",
+      "id": "8468441e-1a7e-455e-b8f1-952549fabe79",
       "name": "atualizar-estado-detalhes",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        2048,
-        1744
+        2144,
+        3552
       ],
       "credentials": {
         "postgres": {
@@ -800,13 +841,13 @@
           "queryReplacement": "={{ [$('parse-mensagem').first().json.texto, $('buscar-vendedor').first().json.id] }}"
         }
       },
-      "id": "3ec1df83-44ee-433b-bbb1-9ee7a7199db8",
+      "id": "00dbc9f9-ec3e-4f7c-855c-3f5b01190c62",
       "name": "salvar-detalhes-produto",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        608,
-        2048
+        704,
+        3856
       ],
       "credentials": {
         "postgres": {
@@ -823,13 +864,13 @@
         "textBody": "Show! ✍️ Já estou montando o anúncio com essas informações — te chamo assim que tiver tudo pronto.",
         "additionalFields": {}
       },
-      "id": "fddb1925-b47a-4029-846a-7f1853cf8179",
+      "id": "962bf330-9e2c-4a92-87dd-72ab1c94bce6",
       "name": "ack-processando-2",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        848,
-        2048
+        944,
+        3856
       ],
       "webhookId": "810f8217-d5bd-4881-b250-94b01a635177",
       "credentials": {
@@ -843,13 +884,13 @@
       "parameters": {
         "jsCode": "return [{\n  json: {\n    descricao_base: $('parse-mensagem').first().json.texto,\n    fonte: 'vendedor',\n    nome_produto: $('buscar-vendedor').first().json.conversation_context.nome_produto\n  }\n}];\n"
       },
-      "id": "cf21300a-2440-4d0c-9ea2-8243ec369592",
+      "id": "ce36cda5-7f4b-49d6-9b63-f8287705f365",
       "name": "preparar-conteudo-vendedor",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1088,
-        2048
+        1184,
+        3856
       ],
       "notesInFlow": true,
       "notes": "Mesmo formato de saída do avaliar-grounding (nome_produto/descricao_base/fonte), pra convergir no mesmo node gerar-titulo-descricao."
@@ -871,18 +912,20 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"Você é um redator de anúncios do Mercado Livre. Escreva um anúncio para o produto \\\"{{ $json.nome_produto }}\\\" usando SOMENTE as informações factuais abaixo como base — NÃO invente nenhum dado numérico específico (peso, dimensão, capacidade, voltagem, certificação) que não esteja explicitamente nas informações abaixo; se não houver confirmação de um dado, simplesmente omita-o.\\n\\nInformações factuais sobre o produto (fonte: {{ $json.fonte }}):\\n{{ $json.descricao_base }}\\n\\nEscreva:\\n(1) um TÍTULO de venda com NO MÁXIMO 60 caracteres — limite rígido do Mercado Livre, não ultrapasse;\\n(2) uma DESCRICAO estruturada em EXATAMENTE estas 3 seções, cada uma com um cabeçalho em maiúsculas, nesta ordem:\\nSOBRE O PRODUTO — um parágrafo de abertura apresentando o produto.\\nCARACTERÍSTICAS — lista do que é visível/confirmado pelas informações factuais acima (nunca um número que não esteja lá).\\nCOMO USAR — passo a passo funcional de uso.\\nNÃO inclua nenhuma seção de garantia ou envio — isso é adicionado separadamente, fora do seu texto.\\n\\nResponda apenas com um JSON no formato {\\\"titulo\\\": \\\"...\\\", \\\"descricao\\\": \\\"...\\\"}, sem markdown, sem texto fora do JSON.\"\n    }]\n  }],\n  \"generationConfig\": { \"responseMimeType\": \"application/json\" }\n}",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"Você é um redator de anúncios do Mercado Livre. Escreva um anúncio para o produto \\\"{{ JSON.stringify($json.nome_produto).slice(1, -1) }}\\\" usando SOMENTE as informações factuais abaixo como base — NÃO invente nenhum dado numérico específico (peso, dimensão, capacidade, voltagem, certificação) que não esteja explicitamente nas informações abaixo; se não houver confirmação de um dado, simplesmente omita-o.\\n\\nInformações factuais sobre o produto (fonte: {{ JSON.stringify($json.fonte).slice(1, -1) }}):\\n{{ JSON.stringify($json.descricao_base).slice(1, -1) }}\\n\\nEscreva:\\n(1) um TÍTULO de venda com NO MÁXIMO 60 caracteres — limite rígido do Mercado Livre, não ultrapasse;\\n(2) uma DESCRICAO estruturada em EXATAMENTE estas 3 seções, cada uma com um cabeçalho em maiúsculas, nesta ordem:\\nSOBRE O PRODUTO — um parágrafo de abertura apresentando o produto.\\nCARACTERÍSTICAS — lista do que é visível/confirmado pelas informações factuais acima (nunca um número que não esteja lá).\\nCOMO USAR — passo a passo funcional de uso.\\nNÃO inclua nenhuma seção de garantia ou envio — isso é adicionado separadamente, fora do seu texto.\\n\\nResponda apenas com um JSON no formato {\\\"titulo\\\": \\\"...\\\", \\\"descricao\\\": \\\"...\\\"}, sem markdown, sem texto fora do JSON.\"\n    }]\n  }],\n  \"generationConfig\": { \"responseMimeType\": \"application/json\" }\n}",
         "options": {}
       },
-      "id": "3027d341-5060-4f76-b752-8b7c67495361",
+      "id": "b64aa3fc-e871-45fa-98d9-a408c0dfe5bd",
       "name": "gerar-titulo-descricao",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2048,
-        1600
+        2144,
+        3408
       ],
       "notesInFlow": true,
+      "retryOnFail": true,
+      "waitBetweenTries": 3,
       "credentials": {
         "httpHeaderAuth": {
           "id": "x7IS2FVLf0fGltc3",
@@ -895,13 +938,13 @@
       "parameters": {
         "jsCode": "const GARANTIA_ENVIO = 'GARANTIA E ENVIO\\nProduto verificado antes da postagem. Envio rápido com embalagem protegida.\\nEm caso de dúvidas, entre em contato pelo canal de mensagens do anúncio para atendimento ágil.';\n\nconst raw = $json.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';\nlet parsed;\ntry {\n  parsed = JSON.parse(raw);\n} catch (e) {\n  parsed = {};\n}\n\nconst titulo = (parsed.titulo || 'Produto à venda').slice(0, 60);\nconst descricaoBase = parsed.descricao || 'Não foi possível gerar a descrição automaticamente — edite manualmente.';\nconst descricao = `${descricaoBase}\\n\\n${GARANTIA_ENVIO}`;\n\nreturn [{ json: { titulo, descricao } }];\n"
       },
-      "id": "5e60e0df-5f1a-484f-9357-e836422055f8",
+      "id": "93f1835d-ab08-4524-bbd8-ce5ddb1ee792",
       "name": "montar-titulo-descricao-final",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2288,
-        1600
+        2384,
+        3408
       ],
       "notesInFlow": true,
       "notes": "GARANTIA E ENVIO é texto fixo, sempre igual, colado aqui por código — nunca passa pelo Gemini, então não tem como um dia sair diferente do combinado ou incluir uma promessa que a empresa não faz."
@@ -914,13 +957,13 @@
           "queryReplacement": "={{ [$json.titulo, $json.descricao, $('buscar-vendedor').first().json.conversation_context.listing_id] }}"
         }
       },
-      "id": "c388a9ba-a223-424d-923a-9e19de344964",
+      "id": "57ac1190-25d4-4b35-962b-e86f8dc27135",
       "name": "atualizar-listing-titulo-descricao",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        2528,
-        1600
+        2624,
+        3408
       ],
       "notesInFlow": true,
       "credentials": {
@@ -939,13 +982,13 @@
         "textBody": "=*{{ $('atualizar-listing-titulo-descricao').first().json.generated_title }}*",
         "additionalFields": {}
       },
-      "id": "0f104a97-9d3f-4472-a17d-4c6443224fb2",
+      "id": "ed1f5335-d1d1-469d-977e-8592fe20e055",
       "name": "envio-titulo",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        2768,
-        1600
+        2864,
+        3408
       ],
       "webhookId": "4ee0f03e-b696-48a9-b8b8-aaa341e46b46",
       "credentials": {
@@ -963,13 +1006,13 @@
         "textBody": "={{ $('atualizar-listing-titulo-descricao').first().json.generated_description }}",
         "additionalFields": {}
       },
-      "id": "2db4f4cf-f5c4-4a84-9ca3-0bafc28b0b63",
+      "id": "634cbcd7-0645-47b8-8af7-fe00dd516400",
       "name": "envio-descricao",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        3008,
-        1600
+        3104,
+        3408
       ],
       "webhookId": "ef7ff0ca-1459-4763-ae46-4d08f9c29510",
       "credentials": {
@@ -983,13 +1026,13 @@
       "parameters": {
         "jsCode": "let row;\ntry {\n  // caminho: geração nova (título/descrição acabaram de ser gerados/salvos)\n  row = $('atualizar-listing-titulo-descricao').first().json;\n} catch (e) {\n  // caminho: botão \"gerar de novo\" — lê o que já existe na listing\n  row = $('buscar-listing-para-regeneracao').first().json;\n}\n\nconst cc = $('buscar-vendedor').first().json.conversation_context;\nconst contexto = typeof cc === 'string' ? JSON.parse(cc || '{}') : (cc || {});\n\nreturn [{\n  json: {\n    listing_id: row.id,\n    generated_title: row.generated_title,\n    generated_description: row.generated_description,\n    original_photo_storage_url: row.original_photo_url,\n    nome_produto: contexto.nome_produto\n  }\n}];\n"
       },
-      "id": "59c81d37-8014-4b2c-b060-2faeb1d02d1d",
+      "id": "0d066f17-6c41-491a-a00c-7b9494580bba",
       "name": "preparar-para-imagens",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3248,
-        1600
+        3344,
+        3408
       ],
       "notesInFlow": true,
       "notes": "Convergência: recebe tanto de atualizar-listing-titulo-descricao (geração nova) quanto de buscar-listing-para-regeneracao (botão \"gerar de novo\")."
@@ -1005,13 +1048,13 @@
           }
         }
       },
-      "id": "1fdd3e8f-0086-4b1a-a3cb-8e1a8ae0bf78",
+      "id": "4a946abc-d110-4b96-833b-012b8c6d5417",
       "name": "baixar-foto-para-gerar",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3488,
-        1600
+        3584,
+        3408
       ],
       "notesInFlow": true,
       "notes": "Sempre baixa de novo a partir do Storage (bucket público) — o binário baixado direto da Meta lá no início não sobrevive até aqui, porque no meio do caminho a execução pausou esperando o vendedor responder o nome (e/ou os detalhes) do produto."
@@ -1020,46 +1063,138 @@
       "parameters": {
         "jsCode": "// =====================================================================\n// gerar-prompts-gpt — manda o esqueleto das 8 cenas + o anúncio já\n// gerado (título/descrição) pro GPT, pede de volta um prompt customizado\n// por cena, em JSON. Copiado (estrutura do prompt e ESQUELETOS_CENAS) de\n// ml_test/test_pipeline_gpt_gemini.py, função gerar_prompts_customizados.\n// =====================================================================\n//\n// Por que Code node e não HTTP Request node: o texto da instrução inclui\n// as 8 regras_fixas inteiras (bastante texto, com aspas e quebras de\n// linha) — montar isso como string JS normal e mandar via\n// this.helpers.httpRequest é muito mais seguro contra erro de escaping\n// do que tentar encaixar tudo numa expressão de body JSON de um node.\n//\n// Segredo: OPENAI_API_KEY vem de uma variável de ambiente do container\n// ($env), definida no .env do Docker — Code node não anexa Credential\n// pela UI.\n\nconst ESQUELETOS_CENAS = [\n  {\n    nome: '1-foto-principal',\n    regras_fixas: 'Foto principal/capa do anúncio. Produto ocupando OBRIGATORIAMENTE cerca de 80% da área da imagem, fundo branco puro (#FFFFFF), still de estúdio, luz suave e uniforme, sem sombra dura, altíssima fidelidade aos detalhes reais do produto (cor, forma, textura, rótulo). SEM texto sobreposto, SEM elemento gráfico extra — é a foto \\'limpa\\' de catálogo. Não adicionar acessório, marca ou função inexistente. Quadrado 1:1.',\n    is_cover: true\n  },\n  {\n    nome: '2-problema-que-resolve',\n    regras_fixas: 'Cena publicitária quadrada que comunica visualmente O PROBLEMA/A DOR que esse produto resolve (ex: dificuldade, esforço, incômodo do dia a dia relacionado à categoria do produto) — SEM o produto em cena, ou com o produto discretamente à margem. Incluir um texto curto ON-IMAGE (título de 3-6 palavras) nomeando o problema, de forma honesta e baseada só no que é plausível pra essa categoria de produto (não inventar estatística, nem alegar um problema que o produto não resolve de fato). Tom visual de campanha, iluminação profissional. Texto em português correto, sem erro de ortografia. Quadrado 1:1.'\n  },\n  {\n    nome: '3-beneficios-principais',\n    regras_fixas: 'Cartaz de benefícios quadrado, título grande de impacto no topo. Abaixo, 3-4 blocos com ícone line-icon + frase curta QUALITATIVA descrevendo um benefício real do produto (nunca número/medida/certificação inventada) — ESSE TEXTO PRECISA ESTAR ESCRITO NA IMAGEM, grande e legível, não só sugerido visualmente. Produto em destaque visual (grande, bem iluminado). Paleta coerente com a categoria. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '4-como-funciona',\n    regras_fixas: 'Infográfico técnico premium quadrado, mostrando o produto sendo usado corretamente. EXATAMENTE 3 colunas verticais isoladas (sem nenhum elemento cruzando entre colunas), numeradas 01/02/03, cada uma com no máximo 1 mão humana interagindo com o produto. Título \\'COMO FUNCIONA\\' sem acento, grande, ON-IMAGE. Uma palavra curta em caixa alta abaixo de cada coluna (sem acentuação, ortografia revisada). Mãos adultas realistas, sem deformação. Não inventar peças/funções. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '5-detalhes-premium',\n    regras_fixas: 'Still de close-up/macro quadrado, mostrando com riqueza de detalhe o acabamento, material e textura REAIS do produto (zoom em uma parte específica visível na foto de referência — nunca inventar um detalhe que não está lá). 2-3 linhas de chamada finas apontando pra características visíveis, com rótulo curto e QUALITATIVO ESCRITO NA IMAGEM (ex: \\'acabamento resistente\\', \\'encaixe preciso\\') — nunca número/medida/certificação inventada. Iluminação de estúdio, fundo neutro. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '6-pessoa-real-usando',\n    regras_fixas: 'Fotografia publicitária realista de uma pessoa real (adulta, anatomicamente correta, mãos sem deformação) usando o produto em sua função real, ambiente coerente com a categoria, luz natural, enquadramento fechado na interação pessoa-produto. Não inventar peça ou função. Sem texto sobreposto nesta cena (o objetivo aqui é transmitir confiança/realismo, não informação escrita). Quadrado 1:1.'\n  },\n  {\n    nome: '7-comparacao-antes-depois',\n    regras_fixas: 'Imagem quadrada dividida em 2 metades lado a lado (SEM sobreposição entre as metades). Lado esquerdo: cenário representando a dificuldade/situação SEM o produto (rotulado \\'ANTES\\' ou \\'SEM\\', em português, ON-IMAGE, texto pequeno e discreto). Lado direito: mesma situação já resolvida COM o produto em uso (rotulado \\'DEPOIS\\' ou \\'COM\\'). NÃO alegar percentuais, tempo economizado ou qualquer resultado quantificado — é uma comparação qualitativa de situação, não uma alegação de performance mensurável. Linha divisória nítida entre os dois lados. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '8-medidas-reais',\n    regras_fixas: 'Imagem quadrada de referência de tamanho do produto. SE E SOMENTE SE a descrição do produto fornecida abaixo contiver uma medida/dimensão real confirmada, mostrar um diagrama com linhas de medida e ESSE NÚMERO REAL escrito ON-IMAGE. SE NÃO houver medida real confirmada na descrição, NÃO INVENTAR NENHUM NÚMERO — em vez disso, gerar uma \\'referência de escala visual\\': o produto posicionado ao lado de um objeto cotidiano comum e reconhecível (ex: uma mão humana, um celular, uma moeda — escolha o que for proporcionalmente coerente com o tamanho provável da categoria do produto), sem nenhum número impresso, só a comparação visual de tamanho. Fundo neutro, iluminação de estúdio. Texto em português correto (se houver). Quadrado 1:1.'\n  }\n];\n\nconst nomeProduto = $('preparar-para-imagens').first().json.nome_produto;\nconst tituloGerado = $('preparar-para-imagens').first().json.generated_title;\nconst descricaoGerada = $('preparar-para-imagens').first().json.generated_description;\nconst descricaoProduto = `Título do anúncio: ${tituloGerado}\\n\\nDescrição do anúncio:\\n${descricaoGerada}`;\n\nconst esqueletosTexto = ESQUELETOS_CENAS\n  .map(c => `CENA \"${c.nome}\": ${c.regras_fixas}`)\n  .join('\\n\\n');\n\nconst instrucao = `Você escreve prompts de geração de imagem para o modelo Gemini (Google), para anúncios de e-commerce no Mercado Livre.\n\nProduto: ${nomeProduto}\nDescrição real do produto (use como base factual, não invente além disso — inclua aqui qualquer medida/dimensão real que você souber, pra cena 8 poder usá-la; se não souber nenhuma medida real, não invente):\n${descricaoProduto}\n\nAbaixo estão 8 \"esqueletos\" de cena, na ORDEM EXATA em que devem aparecer no anúncio, cada um com REGRAS FIXAS já calibradas em testes anteriores para evitar bugs visuais conhecidos (objetos se fundindo, texto com erro de ortografia, dados numéricos inventados, selos de certificação falsos). Sua tarefa: para cada cena, escrever um prompt final em português, específico para ESTE produto (usando a descrição real acima), MANTENDO INTEGRALMENTE todas as regras fixas listadas — você pode adicionar detalhes específicos do produto, mas NUNCA remover ou enfraquecer uma regra fixa, e NUNCA inventar número/medida/certificação que não esteja na descrição fornecida.\n\nREGRA GERAL IMPORTANTE (vale pra todas as cenas que pedem texto on-image): o texto/dado central de cada cena precisa aparecer ESCRITO DE FORMA VISÍVEL NA PRÓPRIA IMAGEM, não apenas sugerido visualmente — feedback real de uso mostrou que o comprador absorve muito mais informação do texto embutido na imagem do que da legenda separada.\n\n${esqueletosTexto}\n\nResponda em JSON, formato exato:\n{\"cenas\": [{\"nome\": \"...\", \"prompt_final\": \"...\"}, ...]}\nUma entrada por cena, na mesma ordem, usando o mesmo \"nome\" de cada uma.`;\n\nconst resposta = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.openai.com/v1/chat/completions',\n  headers: {\n    Authorization: `Bearer ${$env.OPENAI_API_KEY}`,\n    'Content-Type': 'application/json'\n  },\n  body: {\n    model: 'gpt-4.1',\n    messages: [{ role: 'user', content: instrucao }],\n    response_format: { type: 'json_object' }\n  },\n  json: true\n});\n\nconst dados = JSON.parse(resposta.choices[0].message.content);\nconst prompts = {};\nfor (const c of dados.cenas) { prompts[c.nome] = c.prompt_final; }\n\nreturn [{ json: { prompts } }];\n"
       },
-      "id": "b4a1505d-821e-431e-ae2d-7875695e4a3d",
+      "id": "98ab927b-c263-4f66-9699-f5786b9e48ab",
       "name": "gerar-prompts-gpt",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3728,
-        1600
+        3824,
+        3408
       ],
       "notesInFlow": true,
       "notes": "Modelo de texto: gpt-4.1 (copiado de MODEL_TEXTO_OPENAI no script de referência — o próprio script já avisa que pode precisar trocar se o nome do modelo mudar na sua conta OpenAI). Diferença deliberada em relação ao script original: aqui a \"descrição do produto\" que alimenta o prompt é o generated_title+generated_description (o anúncio já pronto), não a descrição factual crua — é o que o bloco (c) pediu explicitamente (\"usando o título/descrição gerados\"), enquanto o script de teste standalone usava a descrição crua da busca. Estrutura do prompt e os esqueletos das 8 cenas são copiados do script, sem alteração."
     },
     {
       "parameters": {
-        "jsCode": "// =====================================================================\n// gerar-8-fotos-customizadas — gera as 8 variações da foto do produto\n// via Gemini, uma chamada por cena, usando o prompt_final que o GPT\n// escreveu pra cada uma (node anterior) + a foto original como imagem de\n// referência. Estrutura do prompt completo (preâmbulo fixo + prompt_final)\n// copiada de ml_test/test_pipeline_gpt_gemini.py.\n// =====================================================================\n\nconst ESQUELETOS_CENAS = [\n  {\n    nome: '1-foto-principal',\n    regras_fixas: 'Foto principal/capa do anúncio. Produto ocupando OBRIGATORIAMENTE cerca de 80% da área da imagem, fundo branco puro (#FFFFFF), still de estúdio, luz suave e uniforme, sem sombra dura, altíssima fidelidade aos detalhes reais do produto (cor, forma, textura, rótulo). SEM texto sobreposto, SEM elemento gráfico extra — é a foto \\'limpa\\' de catálogo. Não adicionar acessório, marca ou função inexistente. Quadrado 1:1.',\n    is_cover: true\n  },\n  {\n    nome: '2-problema-que-resolve',\n    regras_fixas: 'Cena publicitária quadrada que comunica visualmente O PROBLEMA/A DOR que esse produto resolve (ex: dificuldade, esforço, incômodo do dia a dia relacionado à categoria do produto) — SEM o produto em cena, ou com o produto discretamente à margem. Incluir um texto curto ON-IMAGE (título de 3-6 palavras) nomeando o problema, de forma honesta e baseada só no que é plausível pra essa categoria de produto (não inventar estatística, nem alegar um problema que o produto não resolve de fato). Tom visual de campanha, iluminação profissional. Texto em português correto, sem erro de ortografia. Quadrado 1:1.'\n  },\n  {\n    nome: '3-beneficios-principais',\n    regras_fixas: 'Cartaz de benefícios quadrado, título grande de impacto no topo. Abaixo, 3-4 blocos com ícone line-icon + frase curta QUALITATIVA descrevendo um benefício real do produto (nunca número/medida/certificação inventada) — ESSE TEXTO PRECISA ESTAR ESCRITO NA IMAGEM, grande e legível, não só sugerido visualmente. Produto em destaque visual (grande, bem iluminado). Paleta coerente com a categoria. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '4-como-funciona',\n    regras_fixas: 'Infográfico técnico premium quadrado, mostrando o produto sendo usado corretamente. EXATAMENTE 3 colunas verticais isoladas (sem nenhum elemento cruzando entre colunas), numeradas 01/02/03, cada uma com no máximo 1 mão humana interagindo com o produto. Título \\'COMO FUNCIONA\\' sem acento, grande, ON-IMAGE. Uma palavra curta em caixa alta abaixo de cada coluna (sem acentuação, ortografia revisada). Mãos adultas realistas, sem deformação. Não inventar peças/funções. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '5-detalhes-premium',\n    regras_fixas: 'Still de close-up/macro quadrado, mostrando com riqueza de detalhe o acabamento, material e textura REAIS do produto (zoom em uma parte específica visível na foto de referência — nunca inventar um detalhe que não está lá). 2-3 linhas de chamada finas apontando pra características visíveis, com rótulo curto e QUALITATIVO ESCRITO NA IMAGEM (ex: \\'acabamento resistente\\', \\'encaixe preciso\\') — nunca número/medida/certificação inventada. Iluminação de estúdio, fundo neutro. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '6-pessoa-real-usando',\n    regras_fixas: 'Fotografia publicitária realista de uma pessoa real (adulta, anatomicamente correta, mãos sem deformação) usando o produto em sua função real, ambiente coerente com a categoria, luz natural, enquadramento fechado na interação pessoa-produto. Não inventar peça ou função. Sem texto sobreposto nesta cena (o objetivo aqui é transmitir confiança/realismo, não informação escrita). Quadrado 1:1.'\n  },\n  {\n    nome: '7-comparacao-antes-depois',\n    regras_fixas: 'Imagem quadrada dividida em 2 metades lado a lado (SEM sobreposição entre as metades). Lado esquerdo: cenário representando a dificuldade/situação SEM o produto (rotulado \\'ANTES\\' ou \\'SEM\\', em português, ON-IMAGE, texto pequeno e discreto). Lado direito: mesma situação já resolvida COM o produto em uso (rotulado \\'DEPOIS\\' ou \\'COM\\'). NÃO alegar percentuais, tempo economizado ou qualquer resultado quantificado — é uma comparação qualitativa de situação, não uma alegação de performance mensurável. Linha divisória nítida entre os dois lados. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '8-medidas-reais',\n    regras_fixas: 'Imagem quadrada de referência de tamanho do produto. SE E SOMENTE SE a descrição do produto fornecida abaixo contiver uma medida/dimensão real confirmada, mostrar um diagrama com linhas de medida e ESSE NÚMERO REAL escrito ON-IMAGE. SE NÃO houver medida real confirmada na descrição, NÃO INVENTAR NENHUM NÚMERO — em vez disso, gerar uma \\'referência de escala visual\\': o produto posicionado ao lado de um objeto cotidiano comum e reconhecível (ex: uma mão humana, um celular, uma moeda — escolha o que for proporcionalmente coerente com o tamanho provável da categoria do produto), sem nenhum número impresso, só a comparação visual de tamanho. Fundo neutro, iluminação de estúdio. Texto em português correto (se houver). Quadrado 1:1.'\n  }\n];\nconst MODEL = 'gemini-3.1-flash-image';\n\nconst promptsPorNome = $('gerar-prompts-gpt').first().json.prompts;\nconst fotoOrigem = $('baixar-foto-para-gerar').first().binary.data;\nconst fotoBase64 = fotoOrigem.data;\nconst mimeTypeOrigem = fotoOrigem.mimeType || 'image/jpeg';\n\nasync function chamarGemini(promptCompleto, imageConfig) {\n  return this.helpers.httpRequest({\n    method: 'POST',\n    url: `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,\n    headers: {\n      'x-goog-api-key': $env.GEMINI_API_KEY,\n      'Content-Type': 'application/json'\n    },\n    body: {\n      contents: [{\n        parts: [\n          { text: promptCompleto },\n          { inline_data: { mime_type: mimeTypeOrigem, data: fotoBase64 } }\n        ]\n      }],\n      generationConfig: {\n        responseModalities: ['IMAGE'],\n        imageConfig\n      }\n    },\n    json: true\n  });\n}\n\nasync function gerarCena(esqueleto) {\n  const promptFinal = promptsPorNome[esqueleto.nome];\n  if (!promptFinal) {\n    throw new Error(`GPT não devolveu prompt para a cena \"${esqueleto.nome}\"`);\n  }\n\n  const promptCompleto = `Usando a imagem de referência do produto anexada, gere uma nova foto do MESMO produto exato (preserve rigorosamente cor, formato, proporções, rótulos e texturas reais do objeto — não invente detalhes que o produto não tem). ${promptFinal}`;\n\n  let resposta;\n  try {\n    resposta = await chamarGemini.call(this, promptCompleto, { aspectRatio: '1:1', imageSize: '2K' });\n  } catch (e) {\n    // image_size \"2K\" pode não ser aceito — tenta de novo sem ele (fica em 1K).\n    resposta = await chamarGemini.call(this, promptCompleto, { aspectRatio: '1:1' });\n  }\n\n  const partes = resposta?.candidates?.[0]?.content?.parts ?? [];\n  const parteImagem = partes.find(p => p.inlineData || p.inline_data);\n  const inline = parteImagem?.inlineData ?? parteImagem?.inline_data;\n\n  if (!inline) {\n    throw new Error(`Gemini não retornou imagem para a cena \"${esqueleto.nome}\": ${JSON.stringify(resposta).slice(0, 500)}`);\n  }\n\n  return {\n    json: { scene: esqueleto.nome, is_cover: !!esqueleto.is_cover },\n    binary: {\n      imagem: {\n        data: inline.data,\n        mimeType: inline.mimeType ?? inline.mime_type ?? 'image/png',\n        fileName: `${esqueleto.nome}.png`\n      }\n    }\n  };\n}\n\nreturn Promise.all(ESQUELETOS_CENAS.map(esqueleto => gerarCena.call(this, esqueleto)));\n"
+        "jsCode": "// =====================================================================\n// montar-itens-cenas — monta os 8 items (um por cena) que alimentam o node\n// gerar-foto-cena. NÃO faz chamada HTTP: só texto + repasse do binário.\n// =====================================================================\n//\n// Por que a chamada ao Gemini não mora mais aqui: dentro de um Code node o\n// Task Runner limpa as propriedades do erro do Axios (`config`, `response`)\n// antes dele sair do runner, então uma cena que falha chega como erro vazio\n// e só dava pra descobrir o motivo reproduzindo a chamada com curl/Python\n// fora do n8n. Num HTTP Request nativo o n8n mostra \"Full message\"/\"Request\"\n// com o corpo real da resposta da Gemini, igual já acontece em\n// buscar-info-produto e gerar-titulo-descricao.\n//\n// Os textos das 8 cenas (ESQUELETOS_CENAS) e o preâmbulo do prompt são cópia\n// literal do node anterior — não foram alterados.\n\nconst ESQUELETOS_CENAS = [\n  {\n    nome: '1-foto-principal',\n    regras_fixas: 'Foto principal/capa do anúncio. Produto ocupando OBRIGATORIAMENTE cerca de 80% da área da imagem, fundo branco puro (#FFFFFF), still de estúdio, luz suave e uniforme, sem sombra dura, altíssima fidelidade aos detalhes reais do produto (cor, forma, textura, rótulo). SEM texto sobreposto, SEM elemento gráfico extra — é a foto \\'limpa\\' de catálogo. Não adicionar acessório, marca ou função inexistente. Quadrado 1:1.',\n    is_cover: true\n  },\n  {\n    nome: '2-problema-que-resolve',\n    regras_fixas: 'Cena publicitária quadrada que comunica visualmente O PROBLEMA/A DOR que esse produto resolve (ex: dificuldade, esforço, incômodo do dia a dia relacionado à categoria do produto) — SEM o produto em cena, ou com o produto discretamente à margem. Incluir um texto curto ON-IMAGE (título de 3-6 palavras) nomeando o problema, de forma honesta e baseada só no que é plausível pra essa categoria de produto (não inventar estatística, nem alegar um problema que o produto não resolve de fato). Tom visual de campanha, iluminação profissional. Texto em português correto, sem erro de ortografia. Quadrado 1:1.'\n  },\n  {\n    nome: '3-beneficios-principais',\n    regras_fixas: 'Cartaz de benefícios quadrado, título grande de impacto no topo. Abaixo, 3-4 blocos com ícone line-icon + frase curta QUALITATIVA descrevendo um benefício real do produto (nunca número/medida/certificação inventada) — ESSE TEXTO PRECISA ESTAR ESCRITO NA IMAGEM, grande e legível, não só sugerido visualmente. Produto em destaque visual (grande, bem iluminado). Paleta coerente com a categoria. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '4-como-funciona',\n    regras_fixas: 'Infográfico técnico premium quadrado, mostrando o produto sendo usado corretamente. EXATAMENTE 3 colunas verticais isoladas (sem nenhum elemento cruzando entre colunas), numeradas 01/02/03, cada uma com no máximo 1 mão humana interagindo com o produto. Título \\'COMO FUNCIONA\\' sem acento, grande, ON-IMAGE. Uma palavra curta em caixa alta abaixo de cada coluna (sem acentuação, ortografia revisada). Mãos adultas realistas, sem deformação. Não inventar peças/funções. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '5-detalhes-premium',\n    regras_fixas: 'Still de close-up/macro quadrado, mostrando com riqueza de detalhe o acabamento, material e textura REAIS do produto (zoom em uma parte específica visível na foto de referência — nunca inventar um detalhe que não está lá). 2-3 linhas de chamada finas apontando pra características visíveis, com rótulo curto e QUALITATIVO ESCRITO NA IMAGEM (ex: \\'acabamento resistente\\', \\'encaixe preciso\\') — nunca número/medida/certificação inventada. Iluminação de estúdio, fundo neutro. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '6-pessoa-real-usando',\n    regras_fixas: 'Fotografia publicitária realista de uma pessoa real (adulta, anatomicamente correta, mãos sem deformação) usando o produto em sua função real, ambiente coerente com a categoria, luz natural, enquadramento fechado na interação pessoa-produto. Não inventar peça ou função. Sem texto sobreposto nesta cena (o objetivo aqui é transmitir confiança/realismo, não informação escrita). Quadrado 1:1.'\n  },\n  {\n    nome: '7-comparacao-antes-depois',\n    regras_fixas: 'Imagem quadrada dividida em 2 metades lado a lado (SEM sobreposição entre as metades). Lado esquerdo: cenário representando a dificuldade/situação SEM o produto (rotulado \\'ANTES\\' ou \\'SEM\\', em português, ON-IMAGE, texto pequeno e discreto). Lado direito: mesma situação já resolvida COM o produto em uso (rotulado \\'DEPOIS\\' ou \\'COM\\'). NÃO alegar percentuais, tempo economizado ou qualquer resultado quantificado — é uma comparação qualitativa de situação, não uma alegação de performance mensurável. Linha divisória nítida entre os dois lados. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '8-medidas-reais',\n    regras_fixas: 'Imagem quadrada de referência de tamanho do produto. SE E SOMENTE SE a descrição do produto fornecida abaixo contiver uma medida/dimensão real confirmada, mostrar um diagrama com linhas de medida e ESSE NÚMERO REAL escrito ON-IMAGE. SE NÃO houver medida real confirmada na descrição, NÃO INVENTAR NENHUM NÚMERO — em vez disso, gerar uma \\'referência de escala visual\\': o produto posicionado ao lado de um objeto cotidiano comum e reconhecível (ex: uma mão humana, um celular, uma moeda — escolha o que for proporcionalmente coerente com o tamanho provável da categoria do produto), sem nenhum número impresso, só a comparação visual de tamanho. Fundo neutro, iluminação de estúdio. Texto em português correto (se houver). Quadrado 1:1.'\n  }\n];\n\nconst promptsPorNome = $('gerar-prompts-gpt').first().json.prompts;\nconst fotoOrigem = $('baixar-foto-para-gerar').first().binary.data;\n\nreturn ESQUELETOS_CENAS.map(esqueleto => {\n  const promptFinal = promptsPorNome[esqueleto.nome];\n  if (!promptFinal) {\n    throw new Error(`GPT não devolveu prompt para a cena \"${esqueleto.nome}\"`);\n  }\n  const promptCompleto = `Usando a imagem de referência do produto anexada, gere uma nova foto do MESMO produto exato (preserve rigorosamente cor, formato, proporções, rótulos e texturas reais do objeto — não invente detalhes que o produto não tem). ${promptFinal}`;\n  return {\n    json: {\n      scene: esqueleto.nome,\n      is_cover: !!esqueleto.is_cover,\n      prompt_completo: promptCompleto,\n      foto_base64: fotoOrigem.data,\n      foto_mime: fotoOrigem.mimeType || 'image/jpeg'\n    },\n    binary: { foto: fotoOrigem }\n  };\n});\n\n  const promptCompleto = `Usando a imagem de referência do produto anexada, gere uma nova foto do MESMO produto exato (preserve rigorosamente cor, formato, proporções, rótulos e texturas reais do objeto — não invente detalhes que o produto não tem). ${promptFinal}`;\n\n  return {\n    json: {\n      scene: esqueleto.nome,\n      is_cover: !!esqueleto.is_cover,\n      prompt_completo: promptCompleto\n    },\n    // A foto de referência viaja junto em cada item: o node de geração lê\n    // `$binary.foto.data` (base64) para montar o inline_data da request.\n    binary: { foto: fotoOrigem },\n    // As 8 saídas vêm todas do único item de entrada — deixar o pairedItem\n    // explícito mantém a linhagem válida para os nodes seguintes.\n    pairedItem: { item: 0 }\n  };\n});\n"
       },
-      "id": "bd9f62aa-81fb-481b-995c-b59cb59bd844",
-      "name": "gerar-8-fotos-customizadas",
+      "id": "f0689005-2683-4be2-845e-a78f31e9982a",
+      "name": "montar-itens-cenas",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3968,
-        1600
+        4064,
+        3408
       ],
       "notesInFlow": true,
-      "notes": "Modelo: gemini-3.1-flash-image (copiado de MODEL_IMAGEM_GEMINI no script de referência). Tenta image_size \"2K\" primeiro; se o Gemini rejeitar o parâmetro, tenta de novo sem ele (fica em 1K — resolução padrão, que já supera o mínimo de 1200x1200 recomendado pelo Mercado Livre). 8 chamadas em paralelo (Promise.all), mesma razão de sempre: não estourar tempo de execução do N8N."
+      "notes": "So monta os 8 items (texto do prompt + foto de referencia). Nenhuma chamada HTTP aqui - a geracao virou HTTP Request nativo no node seguinte, para o erro da Gemini aparecer inteiro na UI."
     },
     {
       "parameters": {
-        "jsCode": "const SUPABASE_URL = $env.SUPABASE_URL;\nconst BUCKET = $env.SUPABASE_STORAGE_BUCKET || 'listing-photos';\n\nconst listingId = $('preparar-para-imagens').first().json.listing_id;\nconst geradas = $input.all(); // 8 items de gerar-8-fotos-customizadas\n\nasync function subir(caminho, binario) {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${caminho}`,\n    headers: {\n      apikey: $env.SUPABASE_SERVICE_ROLE_KEY,\n      Authorization: `Bearer ${$env.SUPABASE_SERVICE_ROLE_KEY}`,\n      'Content-Type': binario.mimeType,\n      'x-upsert': 'true'\n    },\n    body: Buffer.from(binario.data, 'base64')\n  });\n  return `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${caminho}`;\n}\n\nconst generatedPhotos = await Promise.all(\n  geradas.map(async (item) => {\n    const caminho = `${listingId}/${item.json.scene}.png`;\n    const url = await subir.call(this, caminho, item.binary.imagem);\n    return { url, scene: item.json.scene, is_cover: item.json.is_cover };\n  })\n);\n\nreturn [{ json: { listing_id: listingId, generated_photos: generatedPhotos } }];\n"
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-goog-api-key",
+              "value": "={{ $env.GEMINI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [\n      { \"text\": \"{{ JSON.stringify($json.prompt_completo).slice(1, -1) }}\" },\n      { \"inline_data\": { \"mime_type\": \"{{ $json.foto_mime }}\", \"data\": \"{{ $json.foto_base64 }}\" } }\n    ]\n  }],\n  \"generationConfig\": {\n    \"responseModalities\": [\"IMAGE\"],\n    \"imageConfig\": { \"aspectRatio\": \"1:1\", \"imageSize\": \"1K\" }\n  }\n}",
+        "options": {}
       },
-      "id": "628b3dbf-8296-4465-a923-97e7049ee62f",
-      "name": "salvar-fotos-storage",
+      "id": "d65fa9c5-6c5e-4597-8cb1-df74d4289bc9",
+      "name": "gerar-foto-cena",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4304,
+        3408
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "notesInFlow": true,
+      "notes": "Roda 1x por item (8 cenas), em sequencia. HTTP Request NATIVO de proposito: quando uma cena falha (bloqueio de seguranca da Gemini, parametro invalido, 503...) a UI mostra o corpo completo da resposta. Dentro de um Code node o Task Runner apagava esse corpo e o erro vinha vazio. imageSize fixo em 1K - ja passa o minimo do Mercado Livre."
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// extrair-imagem-cena — transforma as 8 respostas JSON do Gemini nos 8\n// items binários que o upload pro Storage espera.\n// =====================================================================\n//\n// Só manipula JSON e devolve binário no formato nativo do n8n (string\n// base64 em `data`) — não faz chamada HTTP e não monta Buffer, então não\n// esbarra em nenhuma das limitações do Task Runner.\n//\n// O casamento com a cena é POR ÍNDICE contra montar-itens-cenas: o node de\n// geração roda um request por item, na ordem, e está com \"Continue On Fail\"\n// desligado, então ou vêm as 8 respostas na mesma ordem ou a execução para\n// antes de chegar aqui. A checagem de contagem abaixo garante isso.\n\nconst cenas = $('montar-itens-cenas').all();\nconst respostas = $input.all();\n\nif (respostas.length !== cenas.length) {\n  throw new Error(\n    `Esperava ${cenas.length} respostas do Gemini, recebi ${respostas.length}.`\n  );\n}\n\nreturn respostas.map((item, i) => {\n  const meta = cenas[i].json;\n  const resposta = item.json;\n\n  const partes = resposta?.candidates?.[0]?.content?.parts ?? [];\n  const parteImagem = partes.find(p => p.inlineData || p.inline_data);\n  const inline = parteImagem?.inlineData ?? parteImagem?.inline_data;\n\n  if (!inline) {\n    throw new Error(\n      `Gemini não retornou imagem para a cena \"${meta.scene}\": ${JSON.stringify(resposta).slice(0, 500)}`\n    );\n  }\n\n  return {\n    json: { scene: meta.scene, is_cover: meta.is_cover },\n    binary: {\n      imagem: {\n        data: inline.data,\n        mimeType: inline.mimeType ?? inline.mime_type ?? 'image/png',\n        fileName: `${meta.scene}.png`\n      }\n    },\n    pairedItem: { item: i }\n  };\n});\n"
+      },
+      "id": "8a615989-10dc-4ac8-bffd-815b078dfd60",
+      "name": "extrair-imagem-cena",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4208,
-        1600
+        4544,
+        3408
       ],
       "notesInFlow": true,
-      "notes": "Só as 8 geradas — a original já está no Storage desde salvar-foto-original-storage, não precisa subir de novo. Uploads em paralelo."
+      "notes": "Saida identica a do antigo gerar-8-fotos-customizadas (json.scene/is_cover + binary.imagem), entao upload-fotos-storage e montar-lista-fotos-storage continuam iguais."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/storage/v1/object/{{ $env.SUPABASE_STORAGE_BUCKET || 'listing-photos' }}/{{ $('preparar-para-imagens').first().json.listing_id }}/{{ $json.scene }}.png",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "x-upsert",
+              "value": "true"
+            },
+            {
+              "name": "Content-Type",
+              "value": "={{ $binary.imagem.mimeType || 'image/png' }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "imagem",
+        "options": {}
+      },
+      "id": "26d96a8e-f798-4134-b43d-3e83dcef36c5",
+      "name": "upload-fotos-storage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4784,
+        3408
+      ],
+      "notesInFlow": true,
+      "notes": "Roda 1x por item automaticamente (8 items vindos de extrair-imagem-cena) - nao precisa de Promise.all manual. HTTP Request nativo com Body Content Type = n8n Binary File: le binary.imagem direto, sem Buffer, que e o que quebrava dentro do Code node com Task Runners."
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// montar-lista-fotos-storage — junta os 8 uploads de volta num único item,\n// no formato que atualizar-listing-fotos e os envio-foto-1..8 esperam:\n//   { listing_id, generated_photos: [{ url, scene, is_cover }, ...] }\n// =====================================================================\n//\n// Este node NÃO faz upload — quem sobe é o HTTP Request nativo anterior\n// (upload-fotos-storage). Ver a nota daquele node: Buffer dentro de Code\n// node não sobrevive ao RPC do Task Runner.\n//\n// A URL pública é previsível, então é montada por string; o caminho vem do\n// campo `Key` da resposta do Supabase (\"<bucket>/<caminho>\") sempre que\n// disponível, que é o que de fato foi gravado.\n//\n// scene/is_cover são relidos de extrair-imagem-cena e casados PELO\n// NOME DA CENA (não por índice) — o node de upload devolve um item por\n// upload e não carrega o json de entrada adiante.\n\nconst SUPABASE_URL = $env.SUPABASE_URL;\nconst BUCKET = $env.SUPABASE_STORAGE_BUCKET || 'listing-photos';\nconst listingId = $('preparar-para-imagens').first().json.listing_id;\n\nconst cenas = $('extrair-imagem-cena').all().map(i => i.json);\nconst metaPorCena = {};\nfor (const c of cenas) { metaPorCena[c.scene] = c; }\n\nconst generatedPhotos = $input.all().map((item, i) => {\n  const key = item.json?.Key ?? item.json?.key ?? null;\n  let caminho;\n  if (key) {\n    caminho = key.startsWith(BUCKET + '/') ? key.slice(BUCKET.length + 1) : key;\n  } else {\n    caminho = `${listingId}/${cenas[i].scene}.png`;\n  }\n\n  const scene = caminho.split('/').pop().replace('.png', '');\n  const meta = metaPorCena[scene] ?? cenas[i] ?? {};\n\n  return {\n    url: `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${caminho}`,\n    scene,\n    is_cover: !!meta.is_cover\n  };\n});\n\nif (generatedPhotos.length !== cenas.length) {\n  throw new Error(\n    `Esperava ${cenas.length} uploads, recebi ${generatedPhotos.length} — alguma cena não subiu pro Storage.`\n  );\n}\n\n// Ordena pelo prefixo numérico do nome da cena (1-... a 8-...): os nodes\n// envio-foto-1..8 leem generated_photos[0..7] por índice, então a ordem de\n// chegada no WhatsApp depende disso, não da ordem em que os uploads terminaram.\ngeneratedPhotos.sort((a, b) => a.scene.localeCompare(b.scene));\n\nreturn [{ json: { listing_id: listingId, generated_photos: generatedPhotos } }];\n"
+      },
+      "id": "19124a74-20f0-45f2-8b65-d9bbb350655a",
+      "name": "montar-lista-fotos-storage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5024,
+        3408
+      ],
+      "notesInFlow": true,
+      "notes": "Agrega os 8 uploads no array generated_photos, ordenado por cena (1 a 8) pra garantir a ordem de envio no WhatsApp."
     },
     {
       "parameters": {
@@ -1069,13 +1204,13 @@
           "queryReplacement": "={{ [JSON.stringify($json.generated_photos), $json.listing_id] }}"
         }
       },
-      "id": "d4e66445-6347-4e79-a381-230586256c1f",
+      "id": "ba5ece96-bc93-48c1-bfcc-db26ba1f1d63",
       "name": "atualizar-listing-fotos",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        4448,
-        1600
+        5264,
+        3408
       ],
       "credentials": {
         "postgres": {
@@ -1101,16 +1236,16 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('salvar-fotos-storage').first().json.generated_photos[0].url }}\" }\n}",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('montar-lista-fotos-storage').first().json.generated_photos[0].url }}\" }\n}",
         "options": {}
       },
-      "id": "38b9029f-1bdc-43e2-ada4-3f6b207bbfbc",
+      "id": "52ebd3d7-4b5a-4534-bde3-9839b1a51e02",
       "name": "envio-foto-1",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        4688,
-        1440
+        5264,
+        3248
       ],
       "notesInFlow": true,
       "credentials": {
@@ -1138,16 +1273,16 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('salvar-fotos-storage').first().json.generated_photos[1].url }}\" }\n}",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('montar-lista-fotos-storage').first().json.generated_photos[1].url }}\" }\n}",
         "options": {}
       },
-      "id": "4e8423fc-04c7-4830-934c-ac412570c52e",
+      "id": "d107125e-dccf-496e-b135-7061144575ad",
       "name": "envio-foto-2",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        4688,
-        1504
+        5264,
+        3312
       ],
       "credentials": {
         "whatsAppApi": {
@@ -1173,16 +1308,16 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('salvar-fotos-storage').first().json.generated_photos[2].url }}\" }\n}",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('montar-lista-fotos-storage').first().json.generated_photos[2].url }}\" }\n}",
         "options": {}
       },
-      "id": "1d7db455-1627-4950-9dd9-29dc62dc344b",
+      "id": "c7aae4c3-ab5e-4616-aebc-3d87be3bc88b",
       "name": "envio-foto-3",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        4688,
-        1568
+        5264,
+        3376
       ],
       "credentials": {
         "whatsAppApi": {
@@ -1208,16 +1343,16 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('salvar-fotos-storage').first().json.generated_photos[3].url }}\" }\n}",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('montar-lista-fotos-storage').first().json.generated_photos[3].url }}\" }\n}",
         "options": {}
       },
-      "id": "41658f54-f8f2-437d-beeb-c0975c4686db",
+      "id": "3aa07064-c465-4d80-a9a4-2ac8a4ef6589",
       "name": "envio-foto-4",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        4688,
-        1632
+        5264,
+        3440
       ],
       "credentials": {
         "whatsAppApi": {
@@ -1243,16 +1378,16 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('salvar-fotos-storage').first().json.generated_photos[4].url }}\" }\n}",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('montar-lista-fotos-storage').first().json.generated_photos[4].url }}\" }\n}",
         "options": {}
       },
-      "id": "e42f42f1-432d-4338-8f1d-664c41e08e82",
+      "id": "82ef9205-e0ff-4944-a1dd-eb89e1dfa62f",
       "name": "envio-foto-5",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        4688,
-        1680
+        5264,
+        3488
       ],
       "credentials": {
         "whatsAppApi": {
@@ -1278,16 +1413,16 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('salvar-fotos-storage').first().json.generated_photos[5].url }}\" }\n}",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('montar-lista-fotos-storage').first().json.generated_photos[5].url }}\" }\n}",
         "options": {}
       },
-      "id": "28dc53c4-9afd-4fda-88e2-3aae747d9b68",
+      "id": "be4ebe21-d21e-46ee-bcf8-f126819fe563",
       "name": "envio-foto-6",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        4688,
-        1744
+        5264,
+        3552
       ],
       "credentials": {
         "whatsAppApi": {
@@ -1313,16 +1448,16 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('salvar-fotos-storage').first().json.generated_photos[6].url }}\" }\n}",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('montar-lista-fotos-storage').first().json.generated_photos[6].url }}\" }\n}",
         "options": {}
       },
-      "id": "3fac2fb6-e838-41d0-ab72-2b391e92c86e",
+      "id": "6b28f206-4231-4529-9d92-1075010fe430",
       "name": "envio-foto-7",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        4688,
-        1808
+        5264,
+        3616
       ],
       "credentials": {
         "whatsAppApi": {
@@ -1348,16 +1483,16 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('salvar-fotos-storage').first().json.generated_photos[7].url }}\" }\n}",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $('montar-lista-fotos-storage').first().json.generated_photos[7].url }}\" }\n}",
         "options": {}
       },
-      "id": "5277bc85-62e1-4fb1-8583-c9f017f30f9e",
+      "id": "6e030ff8-e28e-40de-9717-5556df3b5a83",
       "name": "envio-foto-8",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        4688,
-        1872
+        5264,
+        3680
       ],
       "credentials": {
         "whatsAppApi": {
@@ -1386,13 +1521,13 @@
         "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"interactive\",\n  \"interactive\": {\n    \"type\": \"button\",\n    \"body\": { \"text\": \"O que você quer fazer com esse anúncio?\" },\n    \"action\": {\n      \"buttons\": [\n        { \"type\": \"reply\", \"reply\": { \"id\": \"aprovar\", \"title\": \"Aprovar\" } },\n        { \"type\": \"reply\", \"reply\": { \"id\": \"gerar_novamente\", \"title\": \"Gerar de novo\" } },\n        { \"type\": \"reply\", \"reply\": { \"id\": \"editar\", \"title\": \"Editar manualmente\" } }\n      ]\n    }\n  }\n}",
         "options": {}
       },
-      "id": "7be66521-8f9a-4a64-947d-c312e78bf17d",
+      "id": "602cf077-c1de-4249-aaf4-7f6e390c508b",
       "name": "enviar-botoes-aprovacao",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        4928,
-        1904
+        5504,
+        3712
       ],
       "notesInFlow": true,
       "credentials": {
@@ -1411,13 +1546,13 @@
           "queryReplacement": "={{ [$('preparar-para-imagens').first().json.listing_id, $('preparar-para-imagens').first().json.original_photo_storage_url, $('preparar-para-imagens').first().json.nome_produto, $('buscar-vendedor').first().json.id] }}"
         }
       },
-      "id": "aff0e9f3-ed41-46ec-b8c1-dec998ad2950",
+      "id": "f2277535-4cf4-4cfa-81ad-b8ff6df92df1",
       "name": "atualizar-estado-aprovacao",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        5168,
-        1904
+        5744,
+        3712
       ],
       "notesInFlow": true,
       "credentials": {
@@ -1512,13 +1647,13 @@
           "renameFallbackOutput": "nao_e_botao"
         }
       },
-      "id": "3ec11794-5f57-4d42-9d9e-08782452fe6d",
+      "id": "026da38b-3c08-4b03-b21b-81b2fcd04637",
       "name": "rotear-botao-aprovacao",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.2,
       "position": [
-        608,
-        2320
+        704,
+        4128
       ],
       "notesInFlow": true,
       "notes": "botao_id vem do parse-mensagem (extraído do interactive.button_reply.id). Mensagem que não é resposta de botão cai no fallback nao_e_botao."
@@ -1531,13 +1666,13 @@
           "queryReplacement": "={{ [$('buscar-vendedor').first().json.id] }}"
         }
       },
-      "id": "ce1944a7-eed1-4197-a839-0bcbdd56d46a",
+      "id": "d525c98e-d938-4ef1-b207-b20050a2dc79",
       "name": "atualizar-estado-oauth",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        848,
-        2160
+        944,
+        3968
       ],
       "credentials": {
         "postgres": {
@@ -1554,13 +1689,13 @@
         "textBody": "Aprovado! ✅ A publicação no Mercado Livre ainda não está implementada nesta fase do desenvolvimento — isso é o próximo bloco.",
         "additionalFields": {}
       },
-      "id": "462361c6-bcb5-4902-9a74-fe22598df3f6",
+      "id": "e8d4f292-dc77-4c69-baee-b32456d907b6",
       "name": "resp-aprovar",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        1088,
-        2160
+        1184,
+        3968
       ],
       "webhookId": "b6332f7c-280b-480a-af89-d8c6ffcdb477",
       "credentials": {
@@ -1578,13 +1713,13 @@
           "queryReplacement": "={{ [$('buscar-vendedor').first().json.conversation_context.listing_id] }}"
         }
       },
-      "id": "59cae26a-e6be-4487-b8de-4de3ecb47803",
+      "id": "aeea1d3a-e41e-46f6-94a1-921c77290401",
       "name": "buscar-listing-para-regeneracao",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        848,
-        2320
+        944,
+        4128
       ],
       "notesInFlow": true,
       "credentials": {
@@ -1603,13 +1738,13 @@
         "textBody": "Edição manual do título/descrição ainda não está implementada nesta fase do desenvolvimento.",
         "additionalFields": {}
       },
-      "id": "df9d2397-82b8-4114-a00a-0085bc94e911",
+      "id": "a737da21-f55e-4c5f-8607-384dea83fbfe",
       "name": "resp-editar",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        848,
-        2480
+        944,
+        4288
       ],
       "webhookId": "1d10b9d7-44af-40c6-97ba-656d04a09437",
       "credentials": {
@@ -1627,13 +1762,13 @@
         "textBody": "Usa um dos botões da mensagem anterior (Aprovar / Gerar de novo / Editar manualmente) pra eu continuar 🙂",
         "additionalFields": {}
       },
-      "id": "30b332fc-75e0-4e26-8a9b-f52c443a0d31",
+      "id": "7864fe98-55f9-46be-a231-77a2be1d1851",
       "name": "resp-usar-botoes",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        848,
-        2624
+        944,
+        4432
       ],
       "webhookId": "f50be295-3a66-4895-8e5b-d17736f56201",
       "credentials": {
@@ -1808,18 +1943,7 @@
       "main": [
         [
           {
-            "node": "salvar-foto-original-storage",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "salvar-foto-original-storage": {
-      "main": [
-        [
-          {
-            "node": "atualizar-listing-foto-original",
+            "node": "upload-foto-original-storage",
             "type": "main",
             "index": 0
           }
@@ -2046,29 +2170,7 @@
       "main": [
         [
           {
-            "node": "gerar-8-fotos-customizadas",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "gerar-8-fotos-customizadas": {
-      "main": [
-        [
-          {
-            "node": "salvar-fotos-storage",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "salvar-fotos-storage": {
-      "main": [
-        [
-          {
-            "node": "atualizar-listing-fotos",
+            "node": "montar-itens-cenas",
             "type": "main",
             "index": 0
           }
@@ -2227,6 +2329,83 @@
           }
         ]
       ]
+    },
+    "upload-foto-original-storage": {
+      "main": [
+        [
+          {
+            "node": "montar-url-foto-original",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "montar-url-foto-original": {
+      "main": [
+        [
+          {
+            "node": "atualizar-listing-foto-original",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "upload-fotos-storage": {
+      "main": [
+        [
+          {
+            "node": "montar-lista-fotos-storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "montar-lista-fotos-storage": {
+      "main": [
+        [
+          {
+            "node": "atualizar-listing-fotos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "montar-itens-cenas": {
+      "main": [
+        [
+          {
+            "node": "gerar-foto-cena",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "gerar-foto-cena": {
+      "main": [
+        [
+          {
+            "node": "extrair-imagem-cena",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "extrair-imagem-cena": {
+      "main": [
+        [
+          {
+            "node": "upload-fotos-storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -2235,7 +2414,7 @@
     "binaryMode": "separate",
     "availableInMCP": false
   },
-  "versionId": "3a689cb0-ebc4-4ca3-a338-a9ff81ce726d",
+  "versionId": "7a674210-8cac-4801-99e1-8e23b2bace89",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "7ddd863a3187472d11bf8c84c8b21f04e10a1e60b9758392b9bf5051599855c6"

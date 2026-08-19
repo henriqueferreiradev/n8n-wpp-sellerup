@@ -151,6 +151,34 @@ docker compose exec n8n printenv | grep N8N_BLOCK_ENV_ACCESS_IN_NODE
 
 Sem saída = não setada = default `false` = `$env` liberado.
 
+## 6. Autenticação dos uploads para o Storage (nenhuma Credential nova)
+
+Os dois nodes que sobem arquivos para o bucket — `upload-foto-original-storage`
+e `upload-fotos-storage` — são **HTTP Request nativos** (obrigatoriamente: ver
+[a regra de binário no CLAUDE.md](../CLAUDE.md), `Buffer` dentro de Code node
+não sobrevive ao Task Runner). Eles **não usam Credential**; mandam os dois
+headers que o Supabase Storage exige por expressão, lendo as mesmas env vars:
+
+| Header | Valor |
+|---|---|
+| `apikey` | `={{ $env.SUPABASE_SERVICE_ROLE_KEY }}` |
+| `Authorization` | `=Bearer {{ $env.SUPABASE_SERVICE_ROLE_KEY }}` |
+| `x-upsert` | `true` (permite regravar o mesmo caminho no "gerar de novo") |
+| `Content-Type` | `={{ $binary.<prop>.mimeType }}` — o content-type com que o arquivo fica salvo |
+
+Por que não uma Credential do tipo **Header Auth**: ela carrega **um** par
+nome/valor, e o Supabase precisa de `apikey` **e** `Authorization` — daria
+credential + header manual de qualquer jeito, com a chave em dois lugares.
+Além disso, criar uma Credential nova significaria mais um `id` para vincular
+na UI a cada import (exatamente a dor que a regra de
+[AVISO-credenciais.md](AVISO-credenciais.md) existe para evitar). Como
+`$env` funciona em expressões de node nativo pelo mesmo
+`N8N_BLOCK_ENV_ACCESS_IN_NODE=false` que os Code nodes já exigem, não há
+credencial nova nesses nodes: **zero `REPLACE_ME_*` adicionados**.
+
+Se um dia `N8N_BLOCK_ENV_ACCESS_IN_NODE` virar `true`, esses dois nodes param
+junto com os Code nodes — é o mesmo pré-requisito, não um novo.
+
 ## Resumo do que precisa existir antes de testar o bloco (c)
 
 | Tipo | Nome | Usado por |
