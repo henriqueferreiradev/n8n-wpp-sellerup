@@ -55,8 +55,9 @@ Um vendedor/usuário de teste do bot. A identidade é o número de WhatsApp.
 | `ml_access_token` | text, nullable | Token de acesso do ML. Idem. |
 | `ml_refresh_token` | text, nullable | Token de refresh do ML. Idem. |
 | `ml_token_expires_at` | timestamptz, nullable | Quando o access token expira — usado para decidir o refresh. |
+| `name` | text, nullable | Nome que o vendedor informou no primeiro contato (estado `aguardando_nome_vendedor`). Null = ainda não passou pela saudação. **Adicionada em `migrations/002_seller_name.sql`**, não está no `001`. |
 | `credit_balance` | integer, not null, default `0` | Saldo atual de créditos. Check: não pode ficar negativo. No protótipo é liberado à mão. |
-| `conversation_state` | text, not null, default `'novo'` | Estado da máquina de conversa. Valores esperados: `novo`, `aguardando_geracao`, `aguardando_aprovacao`, `aguardando_oauth_ml`, `publicando`. Text simples, não enum: os estados ainda vão mudar durante o protótipo. |
+| `conversation_state` | text, not null, default `'novo'` | Estado da máquina de conversa. Valores esperados: `novo`, `aguardando_nome_vendedor`, `aguardando_foto`, `aguardando_nome_produto`, `aguardando_detalhes_produto`, `aguardando_geracao`, `aguardando_aprovacao`, `aguardando_creditos`, `aguardando_oauth_ml`, `publicando` — ver [state-machine.md](state-machine.md). Text simples, não enum: os estados ainda vão mudar durante o protótipo. |
 | `conversation_context` | jsonb, not null, default `'{}'` | Dados temporários da conversa em andamento (ex: url da última foto recebida, id do listing em edição). |
 | `created_at` | timestamptz, not null, default `now()` | |
 | `updated_at` | timestamptz, not null, default `now()` | Atualizado automaticamente por trigger a cada `UPDATE`. |
@@ -124,6 +125,23 @@ vale, por `created_at`.
 | `created_at` | timestamptz, not null, default `now()` | |
 
 Índice: `listing_id`.
+
+## Não persistido de propósito: `palavras_chave`
+
+O node `gerar-titulo-descricao` pede ao Gemini, no mesmo JSON do título e da
+descrição, um campo `palavras_chave` — uma string única com 12 a 18 termos de
+busca separados por espaço. Ele é enviado ao vendedor na mensagem
+*Palavras-chave*, mas **não é gravado no banco**: trafega só dentro da execução,
+de `montar-titulo-descricao-final` até o node `envio-palavras-chave`.
+
+Foi decisão explícita de não abrir migration para isso agora. Se um dia valer a
+pena guardar, são três passos pequenos:
+
+1. `alter table listings add column if not exists palavras_chave text;`
+2. incluir a coluna no `UPDATE` e no `RETURNING` de
+   `atualizar-listing-titulo-descricao`;
+3. apontar `envio-palavras-chave` para esse node em vez de
+   `montar-titulo-descricao-final`.
 
 ## Fora do escopo desta fase
 

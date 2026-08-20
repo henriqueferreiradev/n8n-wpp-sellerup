@@ -114,6 +114,65 @@ grep -c 'Buffer.from' n8n-workflows/bot-whatsapp-estados.json         # tem que 
 grep -c 'helpers.httpRequest' n8n-workflows/bot-whatsapp-estados.json # 2 = só gerar-prompts-gpt; subiu = regressão
 ```
 
+## 🔴 Ordem de entrega no WhatsApp ≠ ordem de execução no n8n
+
+As 8 fotos são enviadas como `"image": { "link": "<url do Supabase>" }`. A Graph
+API responde **200 assim que ACEITA** a mensagem — o download da imagem a partir
+da URL acontece depois, do lado da Meta. Então:
+
+> encadear os nodes em série garante a ordem das *chamadas*, **não** a ordem em
+> que as mensagens chegam no aparelho do vendedor.
+
+Foi exatamente isso que fez a mensagem "💡 Dica pra Mercado Livre" aparecer entre
+a foto 2 e a foto 3 em produção: a cadeia `envio-foto-1 → … → envio-foto-8 →
+envio-dica-capa` estava correta, sem nenhuma ramificação paralela — mas um texto
+não tem nada pra baixar e ultrapassou as fotos ainda em download.
+
+**Ao investigar uma mensagem fora de ordem, cheque as conexões primeiro, mas não
+pare aí:** se a cadeia já for uma linha reta, a causa é esta e nenhuma mudança
+de wiring resolve.
+
+Mitigação atual: o node `aguardar-entrega-fotos` (Wait, 15s) entre
+`envio-foto-8` e `envio-dica-capa`. É uma folga, não uma garantia.
+
+**Correção definitiva, se voltar a escapar:** subir cada foto em
+`POST /{phone_number_id}/media` e mandar por `media_id` em vez de `link` — aí a
+Meta já tem os bytes e não há download pendente. Custa 8 uploads a mais e mexe
+na cadeia de envio, por isso não foi feito ainda.
+
+> ⚠️ O node Wait tem `unit` default **`hours`**. Sempre declare
+> `"unit": "seconds"` explicitamente — sem isso, `amount: 15` vira 15 horas.
+
+## Comandos globais têm precedência sobre o estado
+
+`rotear-comando-global` roda **antes** de `rotear-por-estado` e intercepta
+comandos que valem em qualquer `conversation_state` (hoje: o texto `menu` e as
+respostas da lista do menu). O fallback dele, `fluxo_normal`, segue pro
+`rotear-por-estado`, então mensagem comum não muda de comportamento.
+
+É a saída de emergência de um vendedor travado — antes disso, quem ficasse preso
+em `aguardando_aprovacao` esperando um clique só saía com `UPDATE` manual no
+banco. Comando global novo entra **nesse switch**, não no de estado.
+
+## Limites da Graph API em mensagens interativas
+
+Mensagem de lista é rejeitada inteira (400) se qualquer campo estourar. A Meta
+conta em **unidades UTF-16** (emoji fora do BMP contam 2):
+
+| Campo | Limite |
+|---|---|
+| `header.text` | 60 |
+| `body.text` | 1024 |
+| `action.button` | 20 |
+| `sections[].title` | 24 |
+| `rows[].title` | **24** |
+| `rows[].description` | 72 |
+| total de `rows` | 10 |
+
+O título `🛒 Publicar no Mercado Livre` (27) já estourou uma vez e virou
+`🛒 Publicar no ML`, com o nome completo movido pra `description`. Ao mexer no
+menu, confira os títulos antes de importar.
+
 ## Decisões tomadas — não reabrir sem pedido explícito
 
 - Nodes nativos de envio de WhatsApp (`n8n-nodes-base.whatsApp`) ficam como

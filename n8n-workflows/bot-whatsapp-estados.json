@@ -26,7 +26,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// =====================================================================\n// parse-mensagem — normaliza o payload cru da Meta em campos simples.\n// =====================================================================\n//\n// ESTRUTURA ASSUMIDA (WhatsApp Cloud API, campo de webhook \"messages\"):\n//\n//   {\n//     object: \"whatsapp_business_account\",\n//     entry: [{\n//       changes: [{\n//         value: {\n//           metadata: { phone_number_id, display_phone_number },\n//           contacts: [{ profile: { name }, wa_id }],\n//           messages: [{\n//             from: \"5521989511871\",   // sem \"+\"\n//             id: \"wamid....\",\n//             type: \"text\" | \"image\" | ...,\n//             text:  { body: \"...\" },\n//             image: { id: \"<media_id>\", mime_type, sha256 }\n//           }]\n//         }\n//       }]\n//     }]\n//   }\n//\n// O WhatsApp Trigger do n8n, dependendo da versão, entrega esse envelope\n// completo OU já desembrulhado em `value`. As duas formas são tratadas\n// abaixo — se o seu n8n entregar num formato diferente, olhe a saída crua\n// do trigger e ajuste `extrairValue()`.\n\n// A Meta manda webhooks de status (sent/delivered/read) no MESMO campo\n// \"messages\". Sem o filtro abaixo, cada resposta do bot dispararia o\n// workflow de novo, em loop.\nfunction extrairValue(body) {\n  if (!body || typeof body !== 'object') return null;\n  const doEnvelope = body?.entry?.[0]?.changes?.[0]?.value;\n  if (doEnvelope) return doEnvelope;\n  if (body.messages || body.statuses || body.metadata) return body;\n  return null;\n}\n\n// A Meta entrega o número sem \"+\" (5521989511871); o banco guarda em E.164.\nfunction paraE164(numero) {\n  const digitos = String(numero ?? '').replace(/\\D/g, '');\n  return digitos ? '+' + digitos : null;\n}\n\n// Gotcha conhecido de números brasileiros: a Meta às vezes entrega celulares\n// sem o 9º dígito (+5521989511871 chega como +552189511871). Geramos a outra\n// variante para o SELECT tentar as duas — senão o vendedor \"não existe\".\nfunction varianteNonoDigito(e164) {\n  if (!e164 || !e164.startsWith('+55')) return null;\n  const resto = e164.slice(3); // DDD + número\n  if (resto.length === 11 && resto[2] === '9') {\n    return '+55' + resto.slice(0, 2) + resto.slice(3); // tira o 9\n  }\n  if (resto.length === 10) {\n    return '+55' + resto.slice(0, 2) + '9' + resto.slice(2); // põe o 9\n  }\n  return null;\n}\n\nconst saida = [];\n\nfor (const item of $input.all()) {\n  const value = extrairValue(item.json);\n  if (!value) continue;\n\n  const mensagem = value?.messages?.[0];\n  if (!mensagem) continue; // status callback ou evento sem mensagem: ignora\n\n  const tipo = mensagem.type ?? 'desconhecido';\n  const numeroE164 = paraE164(mensagem.from);\n\n  saida.push({\n    json: {\n      // Número normalizado, usado para achar o vendedor no banco.\n      numero_remetente: numeroE164,\n      // Variante com/sem 9º dígito (cai no mesmo valor quando não se aplica,\n      // para o IN ($1, $2) do SELECT continuar válido).\n      numero_remetente_variante: varianteNonoDigito(numeroE164) ?? numeroE164,\n      // Número exatamente como a Meta mandou — é o que usamos para responder.\n      numero_remetente_raw: mensagem.from ?? null,\n\n      tipo_mensagem: tipo,\n      texto: tipo === 'text' ? (mensagem.text?.body ?? null) : null,\n      media_id: tipo === 'image' ? (mensagem.image?.id ?? null) : null,\n\n      // Resposta de um Reply Button (bloco c). Estrutura assumida do payload:\n      //   messages[0] = {\n      //     type: \"interactive\",\n      //     interactive: { type: \"button_reply\", button_reply: { id: \"aprovar\", title: \"Aprovar\" } }\n      //   }\n      // botao_id fica null para qualquer mensagem que não seja essa.\n      botao_id: tipo === 'interactive' ? (mensagem.interactive?.button_reply?.id ?? null) : null,\n\n      // Número DO BOT que recebeu a mensagem. Evita ter que colar o\n      // phone_number_id à mão em cada node de envio.\n      phone_number_id: value?.metadata?.phone_number_id ?? null,\n\n      nome_contato: value?.contacts?.[0]?.profile?.name ?? null,\n      wamid: mensagem.id ?? null\n    }\n  });\n}\n\n// Array vazio encerra a execução aqui (caso dos status callbacks).\nreturn saida;\n"
+        "jsCode": "// =====================================================================\n// parse-mensagem — normaliza o payload cru da Meta em campos simples.\n// =====================================================================\n//\n// ESTRUTURA ASSUMIDA (WhatsApp Cloud API, campo de webhook \"messages\"):\n//\n//   {\n//     object: \"whatsapp_business_account\",\n//     entry: [{\n//       changes: [{\n//         value: {\n//           metadata: { phone_number_id, display_phone_number },\n//           contacts: [{ profile: { name }, wa_id }],\n//           messages: [{\n//             from: \"5521989511871\",   // sem \"+\"\n//             id: \"wamid....\",\n//             type: \"text\" | \"image\" | ...,\n//             text:  { body: \"...\" },\n//             image: { id: \"<media_id>\", mime_type, sha256 }\n//           }]\n//         }\n//       }]\n//     }]\n//   }\n//\n// O WhatsApp Trigger do n8n, dependendo da versão, entrega esse envelope\n// completo OU já desembrulhado em `value`. As duas formas são tratadas\n// abaixo — se o seu n8n entregar num formato diferente, olhe a saída crua\n// do trigger e ajuste `extrairValue()`.\n\n// A Meta manda webhooks de status (sent/delivered/read) no MESMO campo\n// \"messages\". Sem o filtro abaixo, cada resposta do bot dispararia o\n// workflow de novo, em loop.\nfunction extrairValue(body) {\n  if (!body || typeof body !== 'object') return null;\n  const doEnvelope = body?.entry?.[0]?.changes?.[0]?.value;\n  if (doEnvelope) return doEnvelope;\n  if (body.messages || body.statuses || body.metadata) return body;\n  return null;\n}\n\n// A Meta entrega o número sem \"+\" (5521989511871); o banco guarda em E.164.\nfunction paraE164(numero) {\n  const digitos = String(numero ?? '').replace(/\\D/g, '');\n  return digitos ? '+' + digitos : null;\n}\n\n// Gotcha conhecido de números brasileiros: a Meta às vezes entrega celulares\n// sem o 9º dígito (+5521989511871 chega como +552189511871). Geramos a outra\n// variante para o SELECT tentar as duas — senão o vendedor \"não existe\".\nfunction varianteNonoDigito(e164) {\n  if (!e164 || !e164.startsWith('+55')) return null;\n  const resto = e164.slice(3); // DDD + número\n  if (resto.length === 11 && resto[2] === '9') {\n    return '+55' + resto.slice(0, 2) + resto.slice(3); // tira o 9\n  }\n  if (resto.length === 10) {\n    return '+55' + resto.slice(0, 2) + '9' + resto.slice(2); // põe o 9\n  }\n  return null;\n}\n\nconst saida = [];\n\nfor (const item of $input.all()) {\n  const value = extrairValue(item.json);\n  if (!value) continue;\n\n  const mensagem = value?.messages?.[0];\n  if (!mensagem) continue; // status callback ou evento sem mensagem: ignora\n\n  const tipo = mensagem.type ?? 'desconhecido';\n  const numeroE164 = paraE164(mensagem.from);\n\n  saida.push({\n    json: {\n      // Número normalizado, usado para achar o vendedor no banco.\n      numero_remetente: numeroE164,\n      // Variante com/sem 9º dígito (cai no mesmo valor quando não se aplica,\n      // para o IN ($1, $2) do SELECT continuar válido).\n      numero_remetente_variante: varianteNonoDigito(numeroE164) ?? numeroE164,\n      // Número exatamente como a Meta mandou — é o que usamos para responder.\n      numero_remetente_raw: mensagem.from ?? null,\n\n      tipo_mensagem: tipo,\n      texto: tipo === 'text' ? (mensagem.text?.body ?? null) : null,\n      // Mesmo texto em minusculas e sem espaco nas pontas — e o que o\n      // node rotear-comando-global compara pra achar o comando \"menu\".\n      // String vazia (nunca null) pra comparacao no Switch ser simples.\n      texto_normalizado: tipo === 'text'\n        ? (mensagem.text?.body ?? '').trim().toLowerCase()\n        : '',\n      media_id: tipo === 'image' ? (mensagem.image?.id ?? null) : null,\n\n      // Resposta de um Reply Button (bloco c). Estrutura assumida do payload:\n      //   messages[0] = {\n      //     type: \"interactive\",\n      //     interactive: { type: \"button_reply\", button_reply: { id: \"aprovar\", title: \"Aprovar\" } }\n      //   }\n      // botao_id fica null para qualquer mensagem que não seja essa.\n      botao_id: tipo === 'interactive' ? (mensagem.interactive?.button_reply?.id ?? null) : null,\n\n      // Resposta de uma LISTA interativa (menu global). Estrutura:\n      //   interactive: { type: \"list_reply\", list_reply: { id: \"menu_recomecar\", ... } }\n      // Fica separado de botao_id de proposito: rotear-botao-aprovacao\n      // continua olhando so os botoes de aprovacao.\n      lista_id: tipo === 'interactive' ? (mensagem.interactive?.list_reply?.id ?? null) : null,\n\n      // Número DO BOT que recebeu a mensagem. Evita ter que colar o\n      // phone_number_id à mão em cada node de envio.\n      phone_number_id: value?.metadata?.phone_number_id ?? null,\n\n      nome_contato: value?.contacts?.[0]?.profile?.name ?? null,\n      wamid: mensagem.id ?? null\n    }\n  });\n}\n\n// Array vazio encerra a execução aqui (caso dos status callbacks).\nreturn saida;\n"
       },
       "id": "8134e77c-d5ce-4b83-977f-0a5d3716d902",
       "name": "parse-mensagem",
@@ -317,6 +317,54 @@
               },
               "renameOutput": true,
               "outputKey": "aguardando_detalhes_produto"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "estado-aguardando-nome-vendedor",
+                    "leftValue": "={{ $json.conversation_state }}",
+                    "rightValue": "aguardando_nome_vendedor",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "aguardando_nome_vendedor"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "estado-aguardando-foto",
+                    "leftValue": "={{ $json.conversation_state }}",
+                    "rightValue": "aguardando_foto",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "aguardando_foto"
             }
           ]
         },
@@ -606,7 +654,7 @@
         "operation": "send",
         "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
         "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
-        "textBody": "Recebi sua foto! 📸 Antes de gerar o anúncio, me conta: qual é o nome do produto?",
+        "textBody": "Recebi sua foto! 📸 Para eu gerar o anúncio, qual é o nome do produto?\n\n_Quanto mais detalhes você der (marca, modelo, cor), mais preciso fica o anúncio._",
         "additionalFields": {}
       },
       "id": "63bcfa92-d8a2-42b9-8a6c-c12a24adf54d",
@@ -676,7 +724,7 @@
         "operation": "send",
         "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
         "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
-        "textBody": "Show! 🔎 Já estou pesquisando sobre o produto e montando o anúncio — te chamo assim que tiver tudo pronto.",
+        "textBody": "=🚀 Recebi seu pedido!\nProduto: \"{{ $('parse-mensagem').first().json.texto }}\"\n\n⏱️ Tempo estimado: ~3min\n\nVou te avisar quando as 8 imagens estiverem prontas.",
         "additionalFields": {}
       },
       "id": "2fafeb41-a30f-45d5-a878-88d17d7948f4",
@@ -912,7 +960,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"Você é um redator de anúncios do Mercado Livre. Escreva um anúncio para o produto \\\"{{ JSON.stringify($json.nome_produto).slice(1, -1) }}\\\" usando SOMENTE as informações factuais abaixo como base — NÃO invente nenhum dado numérico específico (peso, dimensão, capacidade, voltagem, certificação) que não esteja explicitamente nas informações abaixo; se não houver confirmação de um dado, simplesmente omita-o.\\n\\nInformações factuais sobre o produto (fonte: {{ JSON.stringify($json.fonte).slice(1, -1) }}):\\n{{ JSON.stringify($json.descricao_base).slice(1, -1) }}\\n\\nEscreva:\\n(1) um TÍTULO de venda com NO MÁXIMO 60 caracteres — limite rígido do Mercado Livre, não ultrapasse;\\n(2) uma DESCRICAO estruturada em EXATAMENTE estas 3 seções, cada uma com um cabeçalho em maiúsculas, nesta ordem:\\nSOBRE O PRODUTO — um parágrafo de abertura apresentando o produto.\\nCARACTERÍSTICAS — lista do que é visível/confirmado pelas informações factuais acima (nunca um número que não esteja lá).\\nCOMO USAR — passo a passo funcional de uso.\\nNÃO inclua nenhuma seção de garantia ou envio — isso é adicionado separadamente, fora do seu texto.\\n\\nResponda apenas com um JSON no formato {\\\"titulo\\\": \\\"...\\\", \\\"descricao\\\": \\\"...\\\"}, sem markdown, sem texto fora do JSON.\"\n    }]\n  }],\n  \"generationConfig\": { \"responseMimeType\": \"application/json\" }\n}",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"Você é um redator de anúncios do Mercado Livre. Escreva um anúncio para o produto \\\"{{ JSON.stringify($json.nome_produto).slice(1, -1) }}\\\" usando SOMENTE as informações factuais abaixo como base — NÃO invente nenhum dado numérico específico (peso, dimensão, capacidade, voltagem, certificação) que não esteja explicitamente nas informações abaixo; se não houver confirmação de um dado, simplesmente omita-o.\\n\\nInformações factuais sobre o produto (fonte: {{ JSON.stringify($json.fonte).slice(1, -1) }}):\\n{{ JSON.stringify($json.descricao_base).slice(1, -1) }}\\n\\nEscreva:\\n(1) um TÍTULO de venda com NO MÁXIMO 60 caracteres — limite rígido do Mercado Livre, não ultrapasse;\\n(2) uma DESCRICAO estruturada em EXATAMENTE estas 3 seções, cada uma com um cabeçalho em maiúsculas, nesta ordem:\\nSOBRE O PRODUTO — um parágrafo de abertura apresentando o produto.\\nCARACTERÍSTICAS — lista do que é visível/confirmado pelas informações factuais acima (nunca um número que não esteja lá).\\nCOMO USAR — passo a passo funcional de uso.\\nNÃO inclua nenhuma seção de garantia ou envio — isso é adicionado separadamente, fora do seu texto.\\n\\nAlém disso, gere PALAVRAS-CHAVE de busca pro Mercado Livre: uma lista de 12 a 18 termos/expressões curtas relevantes pra esse produto (sinônimos, nomes alternativos, categoria, uso), separados por espaço, tudo em minúsculas, sem pontuação. Baseie-se só nas informações factuais fornecidas — não invente característica nem categoria que não esteja implícita no que foi dado.\\n\\nResponda apenas com um JSON no formato {\\\"titulo\\\": \\\"...\\\", \\\"descricao\\\": \\\"...\\\", \\\"palavras_chave\\\": \\\"termo1 termo2 termo3 ...\\\"}, sem markdown, sem texto fora do JSON. O campo palavras_chave deve ser uma STRING única com os termos separados por espaço, nunca um array.\"\n    }]\n  }],\n  \"generationConfig\": { \"responseMimeType\": \"application/json\" }\n}",
         "options": {}
       },
       "id": "b64aa3fc-e871-45fa-98d9-a408c0dfe5bd",
@@ -936,7 +984,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const GARANTIA_ENVIO = 'GARANTIA E ENVIO\\nProduto verificado antes da postagem. Envio rápido com embalagem protegida.\\nEm caso de dúvidas, entre em contato pelo canal de mensagens do anúncio para atendimento ágil.';\n\nconst raw = $json.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';\nlet parsed;\ntry {\n  parsed = JSON.parse(raw);\n} catch (e) {\n  parsed = {};\n}\n\nconst titulo = (parsed.titulo || 'Produto à venda').slice(0, 60);\nconst descricaoBase = parsed.descricao || 'Não foi possível gerar a descrição automaticamente — edite manualmente.';\nconst descricao = `${descricaoBase}\\n\\n${GARANTIA_ENVIO}`;\n\nreturn [{ json: { titulo, descricao } }];\n"
+        "jsCode": "const GARANTIA_ENVIO = 'GARANTIA E ENVIO\\nProduto verificado antes da postagem. Envio rápido com embalagem protegida.\\nEm caso de dúvidas, entre em contato pelo canal de mensagens do anúncio para atendimento ágil.';\n\nconst raw = $json.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}';\nlet parsed;\ntry {\n  parsed = JSON.parse(raw);\n} catch (e) {\n  parsed = {};\n}\n\nconst titulo = (parsed.titulo || 'Produto à venda').slice(0, 60);\nconst descricaoBase = parsed.descricao || 'Não foi possível gerar a descrição automaticamente — edite manualmente.';\nconst descricao = `${descricaoBase}\\n\\n${GARANTIA_ENVIO}`;\n\n// palavras_chave vem no MESMO JSON do Gemini (nenhuma chamada extra).\n// Nao e persistido no Postgres nesta rodada — segue só na execução, até a\n// mensagem envio-palavras-chave. Pra guardar, ver nota em docs/data-model.md.\nconst palavrasChave = (parsed.palavras_chave || '').toString().trim()\n  || 'não foi possível gerar as palavras-chave automaticamente — edite manualmente.';\n\nreturn [{ json: { titulo, descricao, palavras_chave: palavrasChave } }];\n"
       },
       "id": "93f1835d-ab08-4524-bbd8-ce5ddb1ee792",
       "name": "montar-titulo-descricao-final",
@@ -979,7 +1027,7 @@
         "operation": "send",
         "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
         "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
-        "textBody": "=*{{ $('atualizar-listing-titulo-descricao').first().json.generated_title }}*",
+        "textBody": "=*Título*\n{{ $('atualizar-listing-titulo-descricao').first().json.generated_title }}",
         "additionalFields": {}
       },
       "id": "ed1f5335-d1d1-469d-977e-8592fe20e055",
@@ -1003,7 +1051,7 @@
         "operation": "send",
         "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
         "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
-        "textBody": "={{ $('atualizar-listing-titulo-descricao').first().json.generated_description }}",
+        "textBody": "=*Descrição*\n{{ $('atualizar-listing-titulo-descricao').first().json.generated_description }}",
         "additionalFields": {}
       },
       "id": "634cbcd7-0645-47b8-8af7-fe00dd516400",
@@ -1790,6 +1838,460 @@
       ],
       "id": "f2ef875b-bedb-47bf-ac0c-db9c635a4caa",
       "name": "converter-foto-base64"
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "👋 Olá! Seja bem-vindo(a) ao SellerUp.\n\nEu crio anúncios profissionais pro Mercado Livre a partir de uma foto: 8 fotos + título + descrição em poucos minutos.\n\nPra começar, como posso te chamar?",
+        "additionalFields": {}
+      },
+      "id": "d9000000-0000-4000-8000-000000000001",
+      "name": "saudacao-pedir-nome",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        16,
+        3056
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Mensagem 1: primeiro contato. Estado 'novo' = vendedor existe mas ainda nao disse o nome."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sellers\nSET conversation_state = 'aguardando_nome_vendedor',\n    updated_at = now()\nWHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$('buscar-vendedor').first().json.id] }}"
+        }
+      },
+      "id": "d9000000-0000-4000-8000-000000000002",
+      "name": "atualizar-estado-nome-vendedor",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        256,
+        3056
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sellers\nSET name = $1,\n    conversation_state = 'aguardando_foto',\n    updated_at = now()\nWHERE id = $2\nRETURNING name;",
+        "options": {
+          "queryReplacement": "={{ [$('parse-mensagem').first().json.texto, $('buscar-vendedor').first().json.id] }}"
+        }
+      },
+      "id": "d9000000-0000-4000-8000-000000000003",
+      "name": "salvar-nome-vendedor",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        16,
+        3216
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Grava o nome do VENDEDOR (sellers.name — coluna adicionada em migrations/002_seller_name.sql). Nao confundir com salvar-nome-produto. RETURNING name alimenta a mensagem seguinte."
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "=Prazer, {{ $json.name }}! 🎁 Você ganhou 400 créditos grátis — dá pra 2 anúncios completos (cada anúncio usa 150 créditos, ainda sobra um restinho)!\n\nAqui é assim: você me manda uma foto do produto, eu pesquiso informações reais sobre ele, e gero um anúncio completo — título, descrição e 8 fotos profissionais — em poucos minutos.\n\nAgora me manda uma foto do produto que você quer anunciar.",
+        "additionalFields": {}
+      },
+      "id": "d9000000-0000-4000-8000-000000000004",
+      "name": "boas-vindas-creditos",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        256,
+        3216
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Mensagem 2. Os valores 400/150 sao texto literal — nao ha logica de credito implementada ainda (ver README)."
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "=*Palavras-chave*\n{{ $('montar-titulo-descricao-final').first().json.palavras_chave }}",
+        "additionalFields": {}
+      },
+      "id": "d9000000-0000-4000-8000-000000000005",
+      "name": "envio-palavras-chave",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        3224,
+        3568
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Le de montar-titulo-descricao-final (nao do Postgres): palavras_chave nao e persistida nesta rodada."
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "Prontinho, aqui estão suas imagens:",
+        "additionalFields": {}
+      },
+      "id": "d9000000-0000-4000-8000-000000000006",
+      "name": "envio-prontinho",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        5608,
+        3568
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "💡 *Dica pra Mercado Livre*\nA imagem 1 já vem em fundo branco puro — é a que costuma ter melhor desempenho nas buscas do Mercado Livre, então é ideal pra deixar como capa do seu anúncio.",
+        "additionalFields": {}
+      },
+      "id": "d9000000-0000-4000-8000-000000000007",
+      "name": "envio-dica-capa",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        5608,
+        3840
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 15,
+        "unit": "seconds"
+      },
+      "id": "e1000000-0000-4000-8000-000000000001",
+      "name": "aguardar-entrega-fotos",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        5608,
+        4000
+      ],
+      "webhookId": "b2f1c0de-0000-4000-8000-000000000001",
+      "notesInFlow": true,
+      "notes": "A cadeia das 8 fotos JA e sequencial - o problema nao e ordem de execucao. Cada foto vai como image.link, e a Meta responde 200 ao ACEITAR, baixando a imagem do Supabase depois; o texto da dica nao tem download e ultrapassava fotos ainda em transito. Esta espera da tempo pra Meta terminar os downloads. Correcao definitiva (se ainda escapar): subir as fotos via /media e mandar por media_id em vez de link - ai nao ha download pendente. Ver README."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cmd-menu",
+                    "leftValue": "={{ $('parse-mensagem').first().json.texto_normalizado }}",
+                    "rightValue": "menu",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "menu"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cmd-recomecar",
+                    "leftValue": "={{ $('parse-mensagem').first().json.lista_id }}",
+                    "rightValue": "menu_recomecar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "recomecar"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cmd-como-funciona",
+                    "leftValue": "={{ $('parse-mensagem').first().json.lista_id }}",
+                    "rightValue": "menu_como_funciona",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "como_funciona"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cmd-creditos",
+                    "leftValue": "={{ $('parse-mensagem').first().json.lista_id }}",
+                    "rightValue": "menu_creditos_embreve",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "id": "cmd-ml",
+                    "leftValue": "={{ $('parse-mensagem').first().json.lista_id }}",
+                    "rightValue": "menu_ml_embreve",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "id": "cmd-personalizacao",
+                    "leftValue": "={{ $('parse-mensagem').first().json.lista_id }}",
+                    "rightValue": "menu_personalizacao_embreve",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "em_breve"
+            }
+          ]
+        },
+        "looseTypeValidation": true,
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "fluxo_normal"
+        }
+      },
+      "id": "e1000000-0000-4000-8000-000000000002",
+      "name": "rotear-comando-global",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -280,
+        3072
+      ],
+      "notesInFlow": true,
+      "notes": "Comandos que valem em QUALQUER conversation_state, checados ANTES do rotear-por-estado. E a saida de emergencia de um vendedor travado (ex: preso em aguardando_aprovacao esperando clique). O fallback 'fluxo_normal' segue pro rotear-por-estado, entao mensagem comum nao muda de comportamento."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('parse-mensagem').first().json.phone_number_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"interactive\",\n  \"interactive\": {\n    \"type\": \"list\",\n    \"header\": { \"type\": \"text\", \"text\": \"Menu\" },\n    \"body\": { \"text\": \"O que você quer fazer?\" },\n    \"action\": {\n      \"button\": \"Ver opções\",\n      \"sections\": [\n        {\n          \"title\": \"Conta\",\n          \"rows\": [\n            { \"id\": \"menu_recomecar\", \"title\": \"🔄 Novo Anúncio\", \"description\": \"Cancela o anúncio atual e começa um novo\" },\n            { \"id\": \"menu_como_funciona\", \"title\": \"ℹ️ Como funciona\", \"description\": \"Veja o passo a passo do SellerUp\" }\n          ]\n        },\n        {\n          \"title\": \"Em breve\",\n          \"rows\": [\n            { \"id\": \"menu_creditos_embreve\", \"title\": \"💳 Créditos e pacotes\", \"description\": \"Em breve\" },\n            { \"id\": \"menu_ml_embreve\", \"title\": \"🛒 Publicar no ML\", \"description\": \"Publicar direto no Mercado Livre — em breve\" },\n            { \"id\": \"menu_personalizacao_embreve\", \"title\": \"🎨 Personalização\", \"description\": \"Em breve\" }\n          ]\n        }\n      ]\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "e1000000-0000-4000-8000-000000000003",
+      "name": "enviar-menu",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -40,
+        3072
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "Lista interativa. O node nativo do WhatsApp nao suporta interactive, por isso HTTP Request direto na Graph API (mesmo padrao de enviar-botoes-aprovacao). NAO altera conversation_state — so a escolha de uma opcao altera."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE sellers\nSET conversation_state = 'aguardando_foto',\n    updated_at = now()\nWHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$('buscar-vendedor').first().json.id] }}"
+        }
+      },
+      "id": "e1000000-0000-4000-8000-000000000004",
+      "name": "resetar-para-foto",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        -40,
+        3232
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
+        }
+      },
+      "notesInFlow": true,
+      "notes": "'Recomecar' do menu: exatamente o UPDATE que antes so dava pra fazer a mao no banco. Vai pra aguardando_foto (nao 'novo') pra nao repetir saudacao/pergunta de nome. sellers.name e conversation_context ficam como estao."
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "Ok, vamos recomeçar! 🔄\n\nMe manda a foto do produto que você quer anunciar.",
+        "additionalFields": {}
+      },
+      "id": "e1000000-0000-4000-8000-000000000005",
+      "name": "resp-recomecar",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        200,
+        3232
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "=ℹ️ *Como funciona o SellerUp*\n\n1. Você me manda uma *foto* do produto.\n2. Eu pergunto o *nome* dele.\n3. Pesquiso informações reais sobre o produto na internet.\n4. Gero o anúncio completo: *título*, *descrição*, *palavras-chave* e *8 fotos profissionais*.\n5. Você *aprova* ou pede pra *gerar de novo*.\n\nLeva uns 3 minutos. Digite *menu* a qualquer momento pra ver as opções.",
+        "additionalFields": {}
+      },
+      "id": "e1000000-0000-4000-8000-000000000006",
+      "name": "resp-como-funciona",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        3392
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "Essa opção ainda não está disponível, mas já está no radar! 🚀",
+        "additionalFields": {}
+      },
+      "id": "e1000000-0000-4000-8000-000000000007",
+      "name": "resp-em-breve",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        3552
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
     }
   ],
   "pinData": {},
@@ -1831,7 +2333,7 @@
       "main": [
         [
           {
-            "node": "rotear-por-estado",
+            "node": "rotear-comando-global",
             "type": "main",
             "index": 0
           }
@@ -1849,7 +2351,7 @@
       "main": [
         [
           {
-            "node": "eh-imagem",
+            "node": "saudacao-pedir-nome",
             "type": "main",
             "index": 0
           }
@@ -1899,6 +2401,20 @@
         [
           {
             "node": "salvar-detalhes-produto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "salvar-nome-vendedor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "eh-imagem",
             "type": "main",
             "index": 0
           }
@@ -2139,7 +2655,7 @@
       "main": [
         [
           {
-            "node": "preparar-para-imagens",
+            "node": "envio-palavras-chave",
             "type": "main",
             "index": 0
           }
@@ -2194,7 +2710,7 @@
       "main": [
         [
           {
-            "node": "envio-foto-1",
+            "node": "envio-prontinho",
             "type": "main",
             "index": 0
           }
@@ -2282,7 +2798,7 @@
       "main": [
         [
           {
-            "node": "enviar-botoes-aprovacao",
+            "node": "aguardar-entrega-fotos",
             "type": "main",
             "index": 0
           }
@@ -2425,6 +2941,122 @@
         [
           {
             "node": "gerar-prompts-gpt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "saudacao-pedir-nome": {
+      "main": [
+        [
+          {
+            "node": "atualizar-estado-nome-vendedor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "salvar-nome-vendedor": {
+      "main": [
+        [
+          {
+            "node": "boas-vindas-creditos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "envio-palavras-chave": {
+      "main": [
+        [
+          {
+            "node": "preparar-para-imagens",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "envio-prontinho": {
+      "main": [
+        [
+          {
+            "node": "envio-foto-1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "envio-dica-capa": {
+      "main": [
+        [
+          {
+            "node": "enviar-botoes-aprovacao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "aguardar-entrega-fotos": {
+      "main": [
+        [
+          {
+            "node": "envio-dica-capa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "rotear-comando-global": {
+      "main": [
+        [
+          {
+            "node": "enviar-menu",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "resetar-para-foto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "resp-como-funciona",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "resp-em-breve",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "rotear-por-estado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "resetar-para-foto": {
+      "main": [
+        [
+          {
+            "node": "resp-recomecar",
             "type": "main",
             "index": 0
           }

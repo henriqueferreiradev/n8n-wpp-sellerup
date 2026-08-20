@@ -15,8 +15,11 @@ conversa em `sellers.conversation_context` (jsonb), como definido em
 stateDiagram-v2
     [*] --> novo: seed / vendedor cadastrado à mão
 
-    novo --> aguardando_nome_produto: recebe imagem ✅ bloco (c)
-    novo --> novo: recebe texto (só pede a foto) ✅ bloco (b)
+    novo --> aguardando_nome_vendedor: qualquer mensagem (manda a saudação) ✅ bloco (c)
+    aguardando_nome_vendedor --> aguardando_foto: vendedor informa o próprio nome ✅ bloco (c)
+
+    aguardando_foto --> aguardando_nome_produto: recebe imagem ✅ bloco (c)
+    aguardando_foto --> aguardando_foto: recebe texto (só pede a foto) ✅ bloco (b)
 
     aguardando_nome_produto --> aguardando_geracao: vendedor informa o nome ✅ bloco (c)
     aguardando_geracao --> aguardando_detalhes_produto: busca não achou nada confiável ✅ bloco (c)
@@ -29,7 +32,7 @@ stateDiagram-v2
     aguardando_creditos --> aguardando_oauth_ml: crédito liberado 🔜 bloco (e)
     aguardando_oauth_ml --> publicando: OAuth concluído 🔜 bloco (d)
     aguardando_aprovacao --> publicando: aprovado, tudo pronto 🔜 bloco (d)
-    publicando --> novo: anúncio publicado 🔜 bloco (d)
+    publicando --> aguardando_foto: anúncio publicado 🔜 bloco (d)
 ```
 
 Legenda: ✅ implementado · 🔜 planejado
@@ -46,8 +49,10 @@ passo a passo.
 
 | Estado | O que significa | Entra quando | Sai quando | Bloco responsável | Hoje |
 |---|---|---|---|---|---|
-| `novo` | Ocioso. Sem anúncio em andamento; esperando uma foto. | Valor default do schema; volta aqui depois de publicar | Chega uma imagem | **(b)** | ✅ implementado |
-| `aguardando_nome_produto` | Foto já baixada e salva; esperando o vendedor informar o nome do produto | Imagem recebida em `novo` | Vendedor responde com o nome | **(c)** | ✅ implementado |
+| `novo` | Vendedor liberado mas que nunca falou com o bot — ainda não disse o nome dele | Valor default do schema | Qualquer mensagem chega (bot manda a saudação) | **(c)** | ✅ implementado |
+| `aguardando_nome_vendedor` | Saudação enviada; esperando o vendedor dizer como quer ser chamado | Qualquer mensagem em `novo` | Vendedor responde (texto vira `sellers.name`) | **(c)** | ✅ implementado |
+| `aguardando_foto` | Ocioso. Sem anúncio em andamento; esperando uma foto. Volta aqui depois de publicar | Vendedor informou o nome | Chega uma imagem | **(b)/(c)** | ✅ implementado |
+| `aguardando_nome_produto` | Foto já baixada e salva; esperando o vendedor informar o nome do produto | Imagem recebida em `aguardando_foto` | Vendedor responde com o nome | **(c)** | ✅ implementado |
 | `aguardando_geracao` | Nome/detalhes recebidos; buscando informação real, gerando título/descrição/fotos | Nome ou detalhes do produto informados | Geração termina (→ `aguardando_aprovacao`) ou busca não confiável (→ `aguardando_detalhes_produto`) | **(c)** | ✅ implementado (é um estado de trânsito — ver nota acima) |
 | `aguardando_detalhes_produto` | A busca não achou informação confiável sobre o produto; esperando o vendedor descrever as características | Busca sem `groundingChunks` / sem texto | Vendedor responde com os detalhes | **(c)** | ✅ implementado |
 | `aguardando_aprovacao` | Anúncio (título + descrição + 8 fotos) enviado; esperando um dos 3 botões (aprovar / gerar de novo / editar) | Geração conclui | Usuário responde com um botão | **(c)** | ✅ implementado (as 3 transições respondem; "aprovar" e "editar" levam a placeholders dos blocos d/futuro) |
@@ -64,7 +69,53 @@ até o bloco (d). Para destravar um vendedor de teste (de qualquer estado):
 update sellers set conversation_state = 'novo' where whatsapp_number = '+55...';
 ```
 
+## Comando global `menu` — fora da máquina de estados
+
+Antes de qualquer roteamento por `conversation_state`, o node
+`rotear-comando-global` intercepta comandos que valem em **qualquer** estado:
+
+| Entrada | O que faz | Mexe no estado? |
+|---|---|---|
+| texto `menu` (minúsculo, sem espaços) | manda a lista interativa | não |
+| linha `menu_recomecar` | `conversation_state = 'aguardando_foto'` | **sim** |
+| linha `menu_como_funciona` | manda o passo a passo | não |
+| linhas `menu_*_embreve` | manda "ainda não disponível" | não |
+| qualquer outra coisa | cai no fallback `fluxo_normal` → `rotear-por-estado` | — |
+
+Isso existe porque a máquina de estados tem becos: um vendedor parado em
+`aguardando_aprovacao` esperando o clique de um botão não era reconhecido ao
+mandar texto, e só saía de lá com `UPDATE` manual no banco. `menu` → *Recomeçar*
+é esse `UPDATE`, na mão do próprio vendedor.
+
+*Recomeçar* volta pra `aguardando_foto`, não pra `novo`, de propósito: `novo`
+dispararia a saudação e a pergunta do nome de novo, e o vendedor já tem
+`sellers.name` preenchido. `conversation_context` é deixado como está — o próximo
+envio de foto cria uma listing nova e o context é reescrito inteiro adiante.
+
 ## Notas de implementação
+
+- **`novo` mudou de significado.** Antes era "ocioso, esperando foto"; agora é
+  "vendedor liberado que nunca conversou com o bot". Quem faz o papel antigo é
+  `aguardando_foto`. Consequência prática: para reapresentar a saudação a um
+  vendedor de teste, mande-o de volta pra `novo`; para pular a saudação e só
+  testar a geração, use `aguardando_foto`.
+
+  ```sql
+  -- refazer o onboarding do zero (saudação + nome + boas-vindas)
+  update sellers set conversation_state = 'novo', name = null
+   where whatsapp_number = '+55...';
+
+  -- pular direto pra "manda a foto"
+  update sellers set conversation_state = 'aguardando_foto'
+   where whatsapp_number = '+55...';
+  ```
+
+- **O nome do vendedor mora em `sellers.name`** (coluna adicionada em
+  `migrations/002_seller_name.sql`), não em `conversation_context` — o context
+  é reescrito inteiro (`jsonb_build_object`) em `atualizar-estado-nome-produto`
+  e `atualizar-estado-aprovacao`, então o nome se perderia no meio do fluxo.
+  Quem grava é o node `salvar-nome-vendedor` (não confundir com
+  `salvar-nome-produto`, que é o nome do PRODUTO, bem mais adiante).
 
 - **`aguardando_nome_produto` e `aguardando_detalhes_produto` são novos no
   bloco (c).** Como as demais, ficam de fora do comentário do schema em
