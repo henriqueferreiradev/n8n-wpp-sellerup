@@ -1068,7 +1068,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3824,
+        4048,
         3408
       ],
       "notesInFlow": true,
@@ -1076,14 +1076,14 @@
     },
     {
       "parameters": {
-        "jsCode": "// =====================================================================\n// montar-itens-cenas — monta os 8 items (um por cena) que alimentam o node\n// gerar-foto-cena. NÃO faz chamada HTTP: só texto + repasse do binário.\n// =====================================================================\n//\n// Por que a chamada ao Gemini não mora mais aqui: dentro de um Code node o\n// Task Runner limpa as propriedades do erro do Axios (`config`, `response`)\n// antes dele sair do runner, então uma cena que falha chega como erro vazio\n// e só dava pra descobrir o motivo reproduzindo a chamada com curl/Python\n// fora do n8n. Num HTTP Request nativo o n8n mostra \"Full message\"/\"Request\"\n// com o corpo real da resposta da Gemini, igual já acontece em\n// buscar-info-produto e gerar-titulo-descricao.\n//\n// Os textos das 8 cenas (ESQUELETOS_CENAS) e o preâmbulo do prompt são cópia\n// literal do node anterior — não foram alterados.\n\nconst ESQUELETOS_CENAS = [\n  {\n    nome: '1-foto-principal',\n    regras_fixas: 'Foto principal/capa do anúncio. Produto ocupando OBRIGATORIAMENTE cerca de 80% da área da imagem, fundo branco puro (#FFFFFF), still de estúdio, luz suave e uniforme, sem sombra dura, altíssima fidelidade aos detalhes reais do produto (cor, forma, textura, rótulo). SEM texto sobreposto, SEM elemento gráfico extra — é a foto \\'limpa\\' de catálogo. Não adicionar acessório, marca ou função inexistente. Quadrado 1:1.',\n    is_cover: true\n  },\n  {\n    nome: '2-problema-que-resolve',\n    regras_fixas: 'Cena publicitária quadrada que comunica visualmente O PROBLEMA/A DOR que esse produto resolve (ex: dificuldade, esforço, incômodo do dia a dia relacionado à categoria do produto) — SEM o produto em cena, ou com o produto discretamente à margem. Incluir um texto curto ON-IMAGE (título de 3-6 palavras) nomeando o problema, de forma honesta e baseada só no que é plausível pra essa categoria de produto (não inventar estatística, nem alegar um problema que o produto não resolve de fato). Tom visual de campanha, iluminação profissional. Texto em português correto, sem erro de ortografia. Quadrado 1:1.'\n  },\n  {\n    nome: '3-beneficios-principais',\n    regras_fixas: 'Cartaz de benefícios quadrado, título grande de impacto no topo. Abaixo, 3-4 blocos com ícone line-icon + frase curta QUALITATIVA descrevendo um benefício real do produto (nunca número/medida/certificação inventada) — ESSE TEXTO PRECISA ESTAR ESCRITO NA IMAGEM, grande e legível, não só sugerido visualmente. Produto em destaque visual (grande, bem iluminado). Paleta coerente com a categoria. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '4-como-funciona',\n    regras_fixas: 'Infográfico técnico premium quadrado, mostrando o produto sendo usado corretamente. EXATAMENTE 3 colunas verticais isoladas (sem nenhum elemento cruzando entre colunas), numeradas 01/02/03, cada uma com no máximo 1 mão humana interagindo com o produto. Título \\'COMO FUNCIONA\\' sem acento, grande, ON-IMAGE. Uma palavra curta em caixa alta abaixo de cada coluna (sem acentuação, ortografia revisada). Mãos adultas realistas, sem deformação. Não inventar peças/funções. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '5-detalhes-premium',\n    regras_fixas: 'Still de close-up/macro quadrado, mostrando com riqueza de detalhe o acabamento, material e textura REAIS do produto (zoom em uma parte específica visível na foto de referência — nunca inventar um detalhe que não está lá). 2-3 linhas de chamada finas apontando pra características visíveis, com rótulo curto e QUALITATIVO ESCRITO NA IMAGEM (ex: \\'acabamento resistente\\', \\'encaixe preciso\\') — nunca número/medida/certificação inventada. Iluminação de estúdio, fundo neutro. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '6-pessoa-real-usando',\n    regras_fixas: 'Fotografia publicitária realista de uma pessoa real (adulta, anatomicamente correta, mãos sem deformação) usando o produto em sua função real, ambiente coerente com a categoria, luz natural, enquadramento fechado na interação pessoa-produto. Não inventar peça ou função. Sem texto sobreposto nesta cena (o objetivo aqui é transmitir confiança/realismo, não informação escrita). Quadrado 1:1.'\n  },\n  {\n    nome: '7-comparacao-antes-depois',\n    regras_fixas: 'Imagem quadrada dividida em 2 metades lado a lado (SEM sobreposição entre as metades). Lado esquerdo: cenário representando a dificuldade/situação SEM o produto (rotulado \\'ANTES\\' ou \\'SEM\\', em português, ON-IMAGE, texto pequeno e discreto). Lado direito: mesma situação já resolvida COM o produto em uso (rotulado \\'DEPOIS\\' ou \\'COM\\'). NÃO alegar percentuais, tempo economizado ou qualquer resultado quantificado — é uma comparação qualitativa de situação, não uma alegação de performance mensurável. Linha divisória nítida entre os dois lados. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '8-medidas-reais',\n    regras_fixas: 'Imagem quadrada de referência de tamanho do produto. SE E SOMENTE SE a descrição do produto fornecida abaixo contiver uma medida/dimensão real confirmada, mostrar um diagrama com linhas de medida e ESSE NÚMERO REAL escrito ON-IMAGE. SE NÃO houver medida real confirmada na descrição, NÃO INVENTAR NENHUM NÚMERO — em vez disso, gerar uma \\'referência de escala visual\\': o produto posicionado ao lado de um objeto cotidiano comum e reconhecível (ex: uma mão humana, um celular, uma moeda — escolha o que for proporcionalmente coerente com o tamanho provável da categoria do produto), sem nenhum número impresso, só a comparação visual de tamanho. Fundo neutro, iluminação de estúdio. Texto em português correto (se houver). Quadrado 1:1.'\n  }\n];\n\nconst promptsPorNome = $('gerar-prompts-gpt').first().json.prompts;\nconst fotoOrigem = $('baixar-foto-para-gerar').first().binary.data;\n\nreturn ESQUELETOS_CENAS.map(esqueleto => {\n  const promptFinal = promptsPorNome[esqueleto.nome];\n  if (!promptFinal) {\n    throw new Error(`GPT não devolveu prompt para a cena \"${esqueleto.nome}\"`);\n  }\n  const promptCompleto = `Usando a imagem de referência do produto anexada, gere uma nova foto do MESMO produto exato (preserve rigorosamente cor, formato, proporções, rótulos e texturas reais do objeto — não invente detalhes que o produto não tem). ${promptFinal}`;\n  return {\n    json: {\n      scene: esqueleto.nome,\n      is_cover: !!esqueleto.is_cover,\n      prompt_completo: promptCompleto,\n      foto_base64: fotoOrigem.data,\n      foto_mime: fotoOrigem.mimeType || 'image/jpeg'\n    },\n    binary: { foto: fotoOrigem }\n  };\n});\n\n  const promptCompleto = `Usando a imagem de referência do produto anexada, gere uma nova foto do MESMO produto exato (preserve rigorosamente cor, formato, proporções, rótulos e texturas reais do objeto — não invente detalhes que o produto não tem). ${promptFinal}`;\n\n  return {\n    json: {\n      scene: esqueleto.nome,\n      is_cover: !!esqueleto.is_cover,\n      prompt_completo: promptCompleto\n    },\n    // A foto de referência viaja junto em cada item: o node de geração lê\n    // `$binary.foto.data` (base64) para montar o inline_data da request.\n    binary: { foto: fotoOrigem },\n    // As 8 saídas vêm todas do único item de entrada — deixar o pairedItem\n    // explícito mantém a linhagem válida para os nodes seguintes.\n    pairedItem: { item: 0 }\n  };\n});\n"
+        "jsCode": "// =====================================================================\n// montar-itens-cenas — monta os 8 items (um por cena) que alimentam o node\n// gerar-foto-cena. NÃO faz chamada HTTP.\n// =====================================================================\nconst ESQUELETOS_CENAS = [\n  {\n    nome: '1-foto-principal',\n    regras_fixas: 'Foto principal/capa do anúncio. Produto ocupando OBRIGATORIAMENTE cerca de 80% da área da imagem, fundo branco puro (#FFFFFF), still de estúdio, luz suave e uniforme, sem sombra dura, altíssima fidelidade aos detalhes reais do produto (cor, forma, textura, rótulo). SEM texto sobreposto, SEM elemento gráfico extra — é a foto \\'limpa\\' de catálogo. Não adicionar acessório, marca ou função inexistente. Quadrado 1:1.',\n    is_cover: true\n  },\n  {\n    nome: '2-problema-que-resolve',\n    regras_fixas: 'Cena publicitária quadrada que comunica visualmente O PROBLEMA/A DOR que esse produto resolve (ex: dificuldade, esforço, incômodo do dia a dia relacionado à categoria do produto) — SEM o produto em cena, ou com o produto discretamente à margem. Incluir um texto curto ON-IMAGE (título de 3-6 palavras) nomeando o problema, de forma honesta e baseada só no que é plausível pra essa categoria de produto (não inventar estatística, nem alegar um problema que o produto não resolve de fato). Tom visual de campanha, iluminação profissional. Texto em português correto, sem erro de ortografia. Quadrado 1:1.'\n  },\n  {\n    nome: '3-beneficios-principais',\n    regras_fixas: 'Cartaz de benefícios quadrado, título grande de impacto no topo. Abaixo, 3-4 blocos com ícone line-icon + frase curta QUALITATIVA descrevendo um benefício real do produto (nunca número/medida/certificação inventada) — ESSE TEXTO PRECISA ESTAR ESCRITO NA IMAGEM, grande e legível, não só sugerido visualmente. Produto em destaque visual (grande, bem iluminado). Paleta coerente com a categoria. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '4-como-funciona',\n    regras_fixas: 'Infográfico técnico premium quadrado, mostrando o produto sendo usado corretamente. EXATAMENTE 3 colunas verticais isoladas (sem nenhum elemento cruzando entre colunas), numeradas 01/02/03, cada uma com no máximo 1 mão humana interagindo com o produto. Título \\'COMO FUNCIONA\\' sem acento, grande, ON-IMAGE. Uma palavra curta em caixa alta abaixo de cada coluna (sem acentuação, ortografia revisada). Mãos adultas realistas, sem deformação. Não inventar peças/funções. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '5-detalhes-premium',\n    regras_fixas: 'Still de close-up/macro quadrado, mostrando com riqueza de detalhe o acabamento, material e textura REAIS do produto (zoom em uma parte específica visível na foto de referência — nunca inventar um detalhe que não está lá). 2-3 linhas de chamada finas apontando pra características visíveis, com rótulo curto e QUALITATIVO ESCRITO NA IMAGEM (ex: \\'acabamento resistente\\', \\'encaixe preciso\\') — nunca número/medida/certificação inventada. Iluminação de estúdio, fundo neutro. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '6-pessoa-real-usando',\n    regras_fixas: 'Fotografia publicitária realista de uma pessoa real (adulta, anatomicamente correta, mãos sem deformação) usando o produto em sua função real, ambiente coerente com a categoria, luz natural, enquadramento fechado na interação pessoa-produto. Não inventar peça ou função. Sem texto sobreposto nesta cena (o objetivo aqui é transmitir confiança/realismo, não informação escrita). Quadrado 1:1.'\n  },\n  {\n    nome: '7-comparacao-antes-depois',\n    regras_fixas: 'Imagem quadrada dividida em 2 metades lado a lado (SEM sobreposição entre as metades). Lado esquerdo: cenário representando a dificuldade/situação SEM o produto (rotulado \\'ANTES\\' ou \\'SEM\\', em português, ON-IMAGE, texto pequeno e discreto). Lado direito: mesma situação já resolvida COM o produto em uso (rotulado \\'DEPOIS\\' ou \\'COM\\'). NÃO alegar percentuais, tempo economizado ou qualquer resultado quantificado — é uma comparação qualitativa de situação, não uma alegação de performance mensurável. Linha divisória nítida entre os dois lados. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '8-medidas-reais',\n    regras_fixas: 'Imagem quadrada de referência de tamanho do produto. SE E SOMENTE SE a descrição do produto fornecida abaixo contiver uma medida/dimensão real confirmada, mostrar um diagrama com linhas de medida e ESSE NÚMERO REAL escrito ON-IMAGE. SE NÃO houver medida real confirmada na descrição, NÃO INVENTAR NENHUM NÚMERO — em vez disso, gerar uma \\'referência de escala visual\\': o produto posicionado ao lado de um objeto cotidiano comum e reconhecível (ex: uma mão humana, um celular, uma moeda — escolha o que for proporcionalmente coerente com o tamanho provável da categoria do produto), sem nenhum número impresso, só a comparação visual de tamanho. Fundo neutro, iluminação de estúdio. Texto em português correto (se houver). Quadrado 1:1.'\n  }\n];\n\nconst promptsPorNome = $('gerar-prompts-gpt').first().json.prompts;\nconst fotoConvertida = $('converter-foto-base64').first().json;\nconst fotoBase64 = fotoConvertida.foto_base64;\nconst fotoMime = fotoConvertida.foto_mime;\n\nif (!fotoBase64) {\n  throw new Error('converter-foto-base64 não devolveu foto_base64 — confira se esse node está antes de montar-itens-cenas na execução.');\n}\n\nreturn ESQUELETOS_CENAS.map(esqueleto => {\n  const promptFinal = promptsPorNome[esqueleto.nome];\n  if (!promptFinal) {\n    throw new Error(`GPT não devolveu prompt para a cena \"${esqueleto.nome}\"`);\n  }\n  const promptCompleto = `Usando a imagem de referência do produto anexada, gere uma nova foto do MESMO produto exato (preserve rigorosamente cor, formato, proporções, rótulos e texturas reais do objeto — não invente detalhes que o produto não tem). ${promptFinal}`;\n  return {\n    json: {\n      scene: esqueleto.nome,\n      is_cover: !!esqueleto.is_cover,\n      prompt_completo: promptCompleto,\n      foto_base64: fotoBase64,\n      foto_mime: fotoMime\n    },\n    pairedItem: { item: 0 }\n  };\n});"
       },
       "id": "f0689005-2683-4be2-845e-a78f31e9982a",
       "name": "montar-itens-cenas",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4064,
+        4288,
         3408
       ],
       "notesInFlow": true,
@@ -1116,7 +1116,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        4304,
+        4528,
         3408
       ],
       "retryOnFail": true,
@@ -1134,7 +1134,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4544,
+        4768,
         3408
       ],
       "notesInFlow": true,
@@ -1175,7 +1175,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        4784,
+        5008,
         3408
       ],
       "notesInFlow": true,
@@ -1190,7 +1190,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5024,
+        5248,
         3408
       ],
       "notesInFlow": true,
@@ -1209,7 +1209,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        5264,
+        5488,
         3408
       ],
       "credentials": {
@@ -1244,7 +1244,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        5264,
+        5488,
         3248
       ],
       "notesInFlow": true,
@@ -1281,7 +1281,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        5264,
+        5488,
         3312
       ],
       "credentials": {
@@ -1316,7 +1316,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        5264,
+        5488,
         3376
       ],
       "credentials": {
@@ -1351,7 +1351,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        5264,
+        5488,
         3440
       ],
       "credentials": {
@@ -1386,7 +1386,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        5264,
+        5488,
         3488
       ],
       "credentials": {
@@ -1421,7 +1421,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        5264,
+        5488,
         3552
       ],
       "credentials": {
@@ -1456,7 +1456,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        5264,
+        5488,
         3616
       ],
       "credentials": {
@@ -1491,7 +1491,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        5264,
+        5488,
         3680
       ],
       "credentials": {
@@ -1526,7 +1526,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        5504,
+        5728,
         3712
       ],
       "notesInFlow": true,
@@ -1551,7 +1551,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
       "position": [
-        5744,
+        5968,
         3712
       ],
       "notesInFlow": true,
@@ -1777,6 +1777,19 @@
           "name": "WhatsApp account"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "const buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst mimeType = $input.first().binary.data.mimeType || 'image/jpeg';\n\nreturn [{\n  json: {\n    ...$input.first().json,\n    foto_base64: buffer.toString('base64'),\n    foto_mime: mimeType\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3808,
+        3408
+      ],
+      "id": "f2ef875b-bedb-47bf-ac0c-db9c635a4caa",
+      "name": "converter-foto-base64"
     }
   ],
   "pinData": {},
@@ -2159,7 +2172,7 @@
       "main": [
         [
           {
-            "node": "gerar-prompts-gpt",
+            "node": "converter-foto-base64",
             "type": "main",
             "index": 0
           }
@@ -2406,6 +2419,17 @@
           }
         ]
       ]
+    },
+    "converter-foto-base64": {
+      "main": [
+        [
+          {
+            "node": "gerar-prompts-gpt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -2414,7 +2438,7 @@
     "binaryMode": "separate",
     "availableInMCP": false
   },
-  "versionId": "7a674210-8cac-4801-99e1-8e23b2bace89",
+  "versionId": "52f3f749-1d28-4c10-8fe8-74199feb5597",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "7ddd863a3187472d11bf8c84c8b21f04e10a1e60b9758392b9bf5051599855c6"
