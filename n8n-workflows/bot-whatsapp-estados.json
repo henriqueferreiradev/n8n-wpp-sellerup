@@ -26,7 +26,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// =====================================================================\n// parse-mensagem — normaliza o payload cru da Meta em campos simples.\n// =====================================================================\n//\n// ESTRUTURA ASSUMIDA (WhatsApp Cloud API, campo de webhook \"messages\"):\n//\n//   {\n//     object: \"whatsapp_business_account\",\n//     entry: [{\n//       changes: [{\n//         value: {\n//           metadata: { phone_number_id, display_phone_number },\n//           contacts: [{ profile: { name }, wa_id }],\n//           messages: [{\n//             from: \"5521989511871\",   // sem \"+\"\n//             id: \"wamid....\",\n//             type: \"text\" | \"image\" | ...,\n//             text:  { body: \"...\" },\n//             image: { id: \"<media_id>\", mime_type, sha256 }\n//           }]\n//         }\n//       }]\n//     }]\n//   }\n//\n// O WhatsApp Trigger do n8n, dependendo da versão, entrega esse envelope\n// completo OU já desembrulhado em `value`. As duas formas são tratadas\n// abaixo — se o seu n8n entregar num formato diferente, olhe a saída crua\n// do trigger e ajuste `extrairValue()`.\n\n// A Meta manda webhooks de status (sent/delivered/read) no MESMO campo\n// \"messages\". Sem o filtro abaixo, cada resposta do bot dispararia o\n// workflow de novo, em loop.\nfunction extrairValue(body) {\n  if (!body || typeof body !== 'object') return null;\n  const doEnvelope = body?.entry?.[0]?.changes?.[0]?.value;\n  if (doEnvelope) return doEnvelope;\n  if (body.messages || body.statuses || body.metadata) return body;\n  return null;\n}\n\n// A Meta entrega o número sem \"+\" (5521989511871); o banco guarda em E.164.\nfunction paraE164(numero) {\n  const digitos = String(numero ?? '').replace(/\\D/g, '');\n  return digitos ? '+' + digitos : null;\n}\n\n// Gotcha conhecido de números brasileiros: a Meta às vezes entrega celulares\n// sem o 9º dígito (+5521989511871 chega como +552189511871). Geramos a outra\n// variante para o SELECT tentar as duas — senão o vendedor \"não existe\".\nfunction varianteNonoDigito(e164) {\n  if (!e164 || !e164.startsWith('+55')) return null;\n  const resto = e164.slice(3); // DDD + número\n  if (resto.length === 11 && resto[2] === '9') {\n    return '+55' + resto.slice(0, 2) + resto.slice(3); // tira o 9\n  }\n  if (resto.length === 10) {\n    return '+55' + resto.slice(0, 2) + '9' + resto.slice(2); // põe o 9\n  }\n  return null;\n}\n\nconst saida = [];\n\nfor (const item of $input.all()) {\n  const value = extrairValue(item.json);\n  if (!value) continue;\n\n  const mensagem = value?.messages?.[0];\n  if (!mensagem) continue; // status callback ou evento sem mensagem: ignora\n\n  const tipo = mensagem.type ?? 'desconhecido';\n  const numeroE164 = paraE164(mensagem.from);\n\n  saida.push({\n    json: {\n      // Número normalizado, usado para achar o vendedor no banco.\n      numero_remetente: numeroE164,\n      // Variante com/sem 9º dígito (cai no mesmo valor quando não se aplica,\n      // para o IN ($1, $2) do SELECT continuar válido).\n      numero_remetente_variante: varianteNonoDigito(numeroE164) ?? numeroE164,\n      // Número exatamente como a Meta mandou — é o que usamos para responder.\n      numero_remetente_raw: mensagem.from ?? null,\n\n      tipo_mensagem: tipo,\n      texto: tipo === 'text' ? (mensagem.text?.body ?? null) : null,\n      // Mesmo texto em minusculas e sem espaco nas pontas — e o que o\n      // node rotear-comando-global compara pra achar o comando \"menu\".\n      // String vazia (nunca null) pra comparacao no Switch ser simples.\n      texto_normalizado: tipo === 'text'\n        ? (mensagem.text?.body ?? '').trim().toLowerCase()\n        : '',\n      media_id: tipo === 'image' ? (mensagem.image?.id ?? null) : null,\n\n      // Resposta de um Reply Button (bloco c). Estrutura assumida do payload:\n      //   messages[0] = {\n      //     type: \"interactive\",\n      //     interactive: { type: \"button_reply\", button_reply: { id: \"aprovar\", title: \"Aprovar\" } }\n      //   }\n      // botao_id fica null para qualquer mensagem que não seja essa.\n      botao_id: tipo === 'interactive' ? (mensagem.interactive?.button_reply?.id ?? null) : null,\n\n      // Resposta de uma LISTA interativa (menu global). Estrutura:\n      //   interactive: { type: \"list_reply\", list_reply: { id: \"menu_recomecar\", ... } }\n      // Fica separado de botao_id de proposito: rotear-botao-aprovacao\n      // continua olhando so os botoes de aprovacao.\n      lista_id: tipo === 'interactive' ? (mensagem.interactive?.list_reply?.id ?? null) : null,\n\n      // Número DO BOT que recebeu a mensagem. Evita ter que colar o\n      // phone_number_id à mão em cada node de envio.\n      phone_number_id: value?.metadata?.phone_number_id ?? null,\n\n      nome_contato: value?.contacts?.[0]?.profile?.name ?? null,\n      wamid: mensagem.id ?? null\n    }\n  });\n}\n\n// Array vazio encerra a execução aqui (caso dos status callbacks).\nreturn saida;\n"
+        "jsCode": "// =====================================================================\n// parse-mensagem — normaliza o payload cru da Meta em campos simples.\n// =====================================================================\n//\n// ESTRUTURA ASSUMIDA (WhatsApp Cloud API, campo de webhook \"messages\"):\n//\n//   {\n//     object: \"whatsapp_business_account\",\n//     entry: [{\n//       changes: [{\n//         value: {\n//           metadata: { phone_number_id, display_phone_number },\n//           contacts: [{ profile: { name }, wa_id }],\n//           messages: [{\n//             from: \"5521989511871\",   // sem \"+\"\n//             id: \"wamid....\",\n//             type: \"text\" | \"image\" | ...,\n//             text:  { body: \"...\" },\n//             image: { id: \"<media_id>\", mime_type, sha256 }\n//           }]\n//         }\n//       }]\n//     }]\n//   }\n//\n// O WhatsApp Trigger do n8n, dependendo da versão, entrega esse envelope\n// completo OU já desembrulhado em `value`. As duas formas são tratadas\n// abaixo — se o seu n8n entregar num formato diferente, olhe a saída crua\n// do trigger e ajuste `extrairValue()`.\n\n// A Meta manda webhooks de status (sent/delivered/read) no MESMO campo\n// \"messages\". Sem o filtro abaixo, cada resposta do bot dispararia o\n// workflow de novo, em loop.\nfunction extrairValue(body) {\n  if (!body || typeof body !== 'object') return null;\n  const doEnvelope = body?.entry?.[0]?.changes?.[0]?.value;\n  if (doEnvelope) return doEnvelope;\n  if (body.messages || body.statuses || body.metadata) return body;\n  return null;\n}\n\n// A Meta entrega o número sem \"+\" (5521989511871); o banco guarda em E.164.\nfunction paraE164(numero) {\n  const digitos = String(numero ?? '').replace(/\\D/g, '');\n  return digitos ? '+' + digitos : null;\n}\n\n// Gotcha conhecido de números brasileiros: a Meta às vezes entrega celulares\n// sem o 9º dígito (+5521989511871 chega como +552189511871). Geramos a outra\n// variante para o SELECT tentar as duas — senão o vendedor \"não existe\".\nfunction varianteNonoDigito(e164) {\n  if (!e164 || !e164.startsWith('+55')) return null;\n  const resto = e164.slice(3); // DDD + número\n  if (resto.length === 11 && resto[2] === '9') {\n    return '+55' + resto.slice(0, 2) + resto.slice(3); // tira o 9\n  }\n  if (resto.length === 10) {\n    return '+55' + resto.slice(0, 2) + '9' + resto.slice(2); // põe o 9\n  }\n  return null;\n}\n\nconst saida = [];\n\nfor (const item of $input.all()) {\n  const value = extrairValue(item.json);\n  if (!value) continue;\n\n  const mensagem = value?.messages?.[0];\n  if (!mensagem) continue; // status callback ou evento sem mensagem: ignora\n\n  const tipo = mensagem.type ?? 'desconhecido';\n  const numeroE164 = paraE164(mensagem.from);\n\n  saida.push({\n    json: {\n      // Número normalizado, usado para achar o vendedor no banco.\n      numero_remetente: numeroE164,\n      // Variante com/sem 9º dígito (cai no mesmo valor quando não se aplica,\n      // para o IN ($1, $2) do SELECT continuar válido).\n      numero_remetente_variante: varianteNonoDigito(numeroE164) ?? numeroE164,\n      // Número exatamente como a Meta mandou — é o que usamos para responder.\n      numero_remetente_raw: mensagem.from ?? null,\n\n      tipo_mensagem: tipo,\n      texto: tipo === 'text' ? (mensagem.text?.body ?? null) : null,\n      // Mesmo texto em minusculas e sem espaco nas pontas — e o que o\n      // node rotear-comando-global compara pra achar o comando \"menu\".\n      // String vazia (nunca null) pra comparacao no Switch ser simples.\n      texto_normalizado: tipo === 'text'\n        ? (mensagem.text?.body ?? '').trim().toLowerCase()\n        : '',\n      media_id: tipo === 'image' ? (mensagem.image?.id ?? null) : null,\n\n      // Resposta de um Reply Button. Estrutura assumida do payload:\n      //   messages[0] = {\n      //     type: \"interactive\",\n      //     interactive: { type: \"button_reply\", button_reply: { id: \"abrir_refazer_imagem\", title: \"...\" } }\n      //   }\n      // botao_id fica null para qualquer mensagem que não seja essa.\n      botao_id: tipo === 'interactive' ? (mensagem.interactive?.button_reply?.id ?? null) : null,\n\n      // Resposta de uma LISTA interativa (menu global ou lista de refazer\n      // imagem). Estrutura:\n      //   interactive: { type: \"list_reply\", list_reply: { id: \"menu_recomecar\", ... } }\n      // Fica separado de botao_id de proposito: rotear-comando-global compara\n      // os dois campos contra rotas diferentes.\n      lista_id: tipo === 'interactive' ? (mensagem.interactive?.list_reply?.id ?? null) : null,\n\n      // Número DO BOT que recebeu a mensagem. Evita ter que colar o\n      // phone_number_id à mão em cada node de envio.\n      phone_number_id: value?.metadata?.phone_number_id ?? null,\n\n      nome_contato: value?.contacts?.[0]?.profile?.name ?? null,\n      wamid: mensagem.id ?? null\n    }\n  });\n}\n\n// Array vazio encerra a execução aqui (caso dos status callbacks).\nreturn saida;\n"
       },
       "id": "8134e77c-d5ce-4b83-977f-0a5d3716d902",
       "name": "parse-mensagem",
@@ -471,7 +471,7 @@
         "operation": "send",
         "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
         "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
-        "textBody": "=Você já está numa etapa mais avançada do fluxo ({{ $json.conversation_state }}), que ainda não foi implementada nesta fase do desenvolvimento.",
+        "textBody": "=Você já está numa etapa mais avançada do fluxo ({{ $json.conversation_state }}), que ainda não foi implementada nesta fase do desenvolvimento.\n\nDigite *menu* a qualquer momento para ver outras opções.",
         "additionalFields": {}
       },
       "id": "37998703-03fd-4664-9bb5-c23244f814a6",
@@ -497,7 +497,7 @@
         "operation": "send",
         "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
         "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
-        "textBody": "=Sua conversa está num estado que eu não reconheço ({{ $json.conversation_state }}) — provavelmente algo do desenvolvimento em andamento. Fala com o Henrique pra resetar.",
+        "textBody": "=Sua conversa está num estado que eu não reconheço ({{ $json.conversation_state }}) — provavelmente algo do desenvolvimento em andamento. Fala com o Henrique pra resetar.\n\nDigite *menu* a qualquer momento para ver outras opções.",
         "additionalFields": {}
       },
       "id": "66e9434d-9572-4bec-bba0-eb9b9bdf7b55",
@@ -1072,7 +1072,7 @@
     },
     {
       "parameters": {
-        "jsCode": "let row;\ntry {\n  // caminho: geração nova (título/descrição acabaram de ser gerados/salvos)\n  row = $('atualizar-listing-titulo-descricao').first().json;\n} catch (e) {\n  // caminho: botão \"gerar de novo\" — lê o que já existe na listing\n  row = $('buscar-listing-para-regeneracao').first().json;\n}\n\nconst cc = $('buscar-vendedor').first().json.conversation_context;\nconst contexto = typeof cc === 'string' ? JSON.parse(cc || '{}') : (cc || {});\n\nreturn [{\n  json: {\n    listing_id: row.id,\n    generated_title: row.generated_title,\n    generated_description: row.generated_description,\n    original_photo_storage_url: row.original_photo_url,\n    nome_produto: contexto.nome_produto\n  }\n}];\n"
+        "jsCode": "const row = $('atualizar-listing-titulo-descricao').first().json;\n\nconst cc = $('buscar-vendedor').first().json.conversation_context;\nconst contexto = typeof cc === 'string' ? JSON.parse(cc || '{}') : (cc || {});\n\nreturn [{\n  json: {\n    listing_id: row.id,\n    generated_title: row.generated_title,\n    generated_description: row.generated_description,\n    original_photo_storage_url: row.original_photo_url,\n    nome_produto: contexto.nome_produto\n  }\n}];\n"
       },
       "id": "0d066f17-6c41-491a-a00c-7b9494580bba",
       "name": "preparar-para-imagens",
@@ -1083,7 +1083,7 @@
         3408
       ],
       "notesInFlow": true,
-      "notes": "Convergência: recebe tanto de atualizar-listing-titulo-descricao (geração nova) quanto de buscar-listing-para-regeneracao (botão \"gerar de novo\")."
+      "notes": "Lê o título/descrição recém-gerados de atualizar-listing-titulo-descricao. Antes também recebia do botão \"gerar de novo\" (removido — refazer imagem por imagem substitui esse caso de uso), por isso o try/catch de convergência saiu."
     },
     {
       "parameters": {
@@ -1124,7 +1124,87 @@
     },
     {
       "parameters": {
-        "jsCode": "// =====================================================================\n// montar-itens-cenas — monta os 8 items (um por cena) que alimentam o node\n// gerar-foto-cena. NÃO faz chamada HTTP.\n// =====================================================================\nconst ESQUELETOS_CENAS = [\n  {\n    nome: '1-foto-principal',\n    regras_fixas: 'Foto principal/capa do anúncio. Produto ocupando OBRIGATORIAMENTE cerca de 80% da área da imagem, fundo branco puro (#FFFFFF), still de estúdio, luz suave e uniforme, sem sombra dura, altíssima fidelidade aos detalhes reais do produto (cor, forma, textura, rótulo). SEM texto sobreposto, SEM elemento gráfico extra — é a foto \\'limpa\\' de catálogo. Não adicionar acessório, marca ou função inexistente. Quadrado 1:1.',\n    is_cover: true\n  },\n  {\n    nome: '2-problema-que-resolve',\n    regras_fixas: 'Cena publicitária quadrada que comunica visualmente O PROBLEMA/A DOR que esse produto resolve (ex: dificuldade, esforço, incômodo do dia a dia relacionado à categoria do produto) — SEM o produto em cena, ou com o produto discretamente à margem. Incluir um texto curto ON-IMAGE (título de 3-6 palavras) nomeando o problema, de forma honesta e baseada só no que é plausível pra essa categoria de produto (não inventar estatística, nem alegar um problema que o produto não resolve de fato). Tom visual de campanha, iluminação profissional. Texto em português correto, sem erro de ortografia. Quadrado 1:1.'\n  },\n  {\n    nome: '3-beneficios-principais',\n    regras_fixas: 'Cartaz de benefícios quadrado, título grande de impacto no topo. Abaixo, 3-4 blocos com ícone line-icon + frase curta QUALITATIVA descrevendo um benefício real do produto (nunca número/medida/certificação inventada) — ESSE TEXTO PRECISA ESTAR ESCRITO NA IMAGEM, grande e legível, não só sugerido visualmente. Produto em destaque visual (grande, bem iluminado). Paleta coerente com a categoria. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '4-como-funciona',\n    regras_fixas: 'Infográfico técnico premium quadrado, mostrando o produto sendo usado corretamente. EXATAMENTE 3 colunas verticais isoladas (sem nenhum elemento cruzando entre colunas), numeradas 01/02/03, cada uma com no máximo 1 mão humana interagindo com o produto. Título \\'COMO FUNCIONA\\' sem acento, grande, ON-IMAGE. Uma palavra curta em caixa alta abaixo de cada coluna (sem acentuação, ortografia revisada). Mãos adultas realistas, sem deformação. Não inventar peças/funções. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '5-detalhes-premium',\n    regras_fixas: 'Still de close-up/macro quadrado, mostrando com riqueza de detalhe o acabamento, material e textura REAIS do produto (zoom em uma parte específica visível na foto de referência — nunca inventar um detalhe que não está lá). 2-3 linhas de chamada finas apontando pra características visíveis, com rótulo curto e QUALITATIVO ESCRITO NA IMAGEM (ex: \\'acabamento resistente\\', \\'encaixe preciso\\') — nunca número/medida/certificação inventada. Iluminação de estúdio, fundo neutro. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '6-pessoa-real-usando',\n    regras_fixas: 'Fotografia publicitária realista de uma pessoa real (adulta, anatomicamente correta, mãos sem deformação) usando o produto em sua função real, ambiente coerente com a categoria, luz natural, enquadramento fechado na interação pessoa-produto. Não inventar peça ou função. Sem texto sobreposto nesta cena (o objetivo aqui é transmitir confiança/realismo, não informação escrita). Quadrado 1:1.'\n  },\n  {\n    nome: '7-comparacao-antes-depois',\n    regras_fixas: 'Imagem quadrada dividida em 2 metades lado a lado (SEM sobreposição entre as metades). Lado esquerdo: cenário representando a dificuldade/situação SEM o produto (rotulado \\'ANTES\\' ou \\'SEM\\', em português, ON-IMAGE, texto pequeno e discreto). Lado direito: mesma situação já resolvida COM o produto em uso (rotulado \\'DEPOIS\\' ou \\'COM\\'). NÃO alegar percentuais, tempo economizado ou qualquer resultado quantificado — é uma comparação qualitativa de situação, não uma alegação de performance mensurável. Linha divisória nítida entre os dois lados. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '8-medidas-reais',\n    regras_fixas: 'Imagem quadrada de referência de tamanho do produto. SE E SOMENTE SE a descrição do produto fornecida abaixo contiver uma medida/dimensão real confirmada, mostrar um diagrama com linhas de medida e ESSE NÚMERO REAL escrito ON-IMAGE. SE NÃO houver medida real confirmada na descrição, NÃO INVENTAR NENHUM NÚMERO — em vez disso, gerar uma \\'referência de escala visual\\': o produto posicionado ao lado de um objeto cotidiano comum e reconhecível (ex: uma mão humana, um celular, uma moeda — escolha o que for proporcionalmente coerente com o tamanho provável da categoria do produto), sem nenhum número impresso, só a comparação visual de tamanho. Fundo neutro, iluminação de estúdio. Texto em português correto (se houver). Quadrado 1:1.'\n  }\n];\n\nconst promptsPorNome = $('gerar-prompts-gpt').first().json.prompts;\nconst fotoConvertida = $('converter-foto-base64').first().json;\nconst fotoBase64 = fotoConvertida.foto_base64;\nconst fotoMime = fotoConvertida.foto_mime;\n\nif (!fotoBase64) {\n  throw new Error('converter-foto-base64 não devolveu foto_base64 — confira se esse node está antes de montar-itens-cenas na execução.');\n}\n\nreturn ESQUELETOS_CENAS.map(esqueleto => {\n  const promptFinal = promptsPorNome[esqueleto.nome];\n  if (!promptFinal) {\n    throw new Error(`GPT não devolveu prompt para a cena \"${esqueleto.nome}\"`);\n  }\n  const promptCompleto = `Usando a imagem de referência do produto anexada, gere uma nova foto do MESMO produto exato (preserve rigorosamente cor, formato, proporções, rótulos e texturas reais do objeto — não invente detalhes que o produto não tem). ${promptFinal}`;\n  return {\n    json: {\n      scene: esqueleto.nome,\n      is_cover: !!esqueleto.is_cover,\n      prompt_completo: promptCompleto,\n      foto_base64: fotoBase64,\n      foto_mime: fotoMime\n    },\n    pairedItem: { item: 0 }\n  };\n});"
+        "operation": "executeQuery",
+        "query": "UPDATE listings SET scene_prompts = $1::jsonb WHERE id = $2;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json.prompts), $('preparar-para-imagens').first().json.listing_id] }}"
+        }
+      },
+      "id": "6f3f0a02-7f5f-4c6b-9f1e-2e9f4b1a7c3d",
+      "name": "salvar-scene-prompts",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        4168,
+        3408
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "postgres": {
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "Salva o prompt final de cada cena assim que o GPT devolve, pra refazer 1 imagem depois (buscar-scene-prompt) não precisar rechamar o GPT — só a Gemini."
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// preparar-regeneracao — entrada da regeneração de 1 imagem específica\n// (botão 🔄 Refazer imagem → lista Imagem 1..8). Traduz o lista_id\n// (\"refazer_3\") no nome da cena e recupera listing_id/URL da foto original\n// do conversation_context do vendedor (gravados em atualizar-estado-aprovacao).\n// =====================================================================\n//\n// Só os NOMES das 8 cenas, na mesma ordem de montar-itens-cenas — as\n// regras_fixas não são necessárias aqui, o prompt final já foi salvo em\n// listings.scene_prompts por salvar-scene-prompts na geração original.\nconst NOMES_CENAS = [\n  '1-foto-principal',\n  '2-problema-que-resolve',\n  '3-beneficios-principais',\n  '4-como-funciona',\n  '5-detalhes-premium',\n  '6-pessoa-real-usando',\n  '7-comparacao-antes-depois',\n  '8-medidas-reais'\n];\n\nconst listaId = $('parse-mensagem').first().json.lista_id ?? '';\nconst indice = parseInt(listaId.replace('refazer_', ''), 10) - 1;\nconst scene = NOMES_CENAS[indice];\n\nif (!scene) {\n  throw new Error(`lista_id \"${listaId}\" não corresponde a nenhuma das 8 cenas (esperava \"refazer_1\".. \"refazer_8\").`);\n}\n\nconst contexto = $('buscar-vendedor').first().json.conversation_context ?? {};\n\nreturn [{\n  json: {\n    scene,\n    listing_id: contexto.listing_id,\n    original_photo_storage_url: contexto.original_photo_storage_url\n  }\n}];\n"
+      },
+      "id": "7a1b2c3d-4e5f-4061-8a9b-0c1d2e3f4a5b",
+      "name": "preparar-regeneracao",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3344,
+        3648
+      ],
+      "notesInFlow": true,
+      "notes": "Entrada da regeneração de 1 imagem. listing_id/original_photo_storage_url vêm do conversation_context (gravado em atualizar-estado-aprovacao), não de uma query nova."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT scene_prompts ->> $2 AS prompt_final FROM listings WHERE id = $1;",
+        "options": {
+          "queryReplacement": "={{ [$('preparar-regeneracao').first().json.listing_id, $('preparar-regeneracao').first().json.scene] }}"
+        }
+      },
+      "id": "8b2c3d4e-5f60-4172-9b0c-1d2e3f4a5b6c",
+      "name": "buscar-scene-prompt",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3808,
+        3648
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "postgres": {
+          "id": "CfixA4paTsJ2EoQK",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "scene_prompts ->> $2 extrai direto no SQL o prompt daquela cena (jsonb get-as-text) — evita precisar de um Code node só pra isso. prompt_final vem null se o anúncio foi gerado antes da migration 003 (scene_prompts ainda vazio) — montar-item-cena-regeneracao trata esse caso com um erro claro."
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// montar-item-cena-regeneracao — equivalente a montar-itens-cenas, mas monta\n// só 1 item (a cena escolhida), usando o prompt já salvo em vez de rechamar\n// o GPT. Alimenta o MESMO gerar-foto-cena da geração original.\n// =====================================================================\nconst meta = $('preparar-regeneracao').first().json;\nconst promptFinal = $json.prompt_final;\n\nif (!promptFinal) {\n  throw new Error(`Não encontrei prompt salvo para a cena \"${meta.scene}\" — esse anúncio provavelmente foi gerado antes do recurso de refazer imagem existir (scene_prompts vazio).`);\n}\n\nconst fotoConvertida = $('converter-foto-base64').first().json;\nconst promptCompleto = `Usando a imagem de referência do produto anexada, gere uma nova foto do MESMO produto exato (preserve rigorosamente cor, formato, proporções, rótulos e texturas reais do objeto — não invente detalhes que o produto não tem). ${promptFinal}`;\n\nreturn [{\n  json: {\n    scene: meta.scene,\n    is_cover: meta.scene === '1-foto-principal',\n    listing_id: meta.listing_id,\n    prompt_completo: promptCompleto,\n    foto_base64: fotoConvertida.foto_base64,\n    foto_mime: fotoConvertida.foto_mime\n  }\n}];\n"
+      },
+      "id": "9c3d4e5f-6071-4283-ac1d-2e3f4a5b6c7d",
+      "name": "montar-item-cena-regeneracao",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4048,
+        3648
+      ],
+      "notesInFlow": true,
+      "notes": "Saída no mesmo formato que montar-itens-cenas espera do gerar-foto-cena (prompt_completo/foto_base64/foto_mime), só que 1 item em vez de 8 — e sem chamar gerar-prompts-gpt."
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// montar-itens-cenas — monta os 8 items (um por cena) que alimentam o node\n// gerar-foto-cena. NÃO faz chamada HTTP.\n// =====================================================================\nconst ESQUELETOS_CENAS = [\n  {\n    nome: '1-foto-principal',\n    regras_fixas: 'Foto principal/capa do anúncio. Produto ocupando OBRIGATORIAMENTE cerca de 80% da área da imagem, fundo branco puro (#FFFFFF), still de estúdio, luz suave e uniforme, sem sombra dura, altíssima fidelidade aos detalhes reais do produto (cor, forma, textura, rótulo). SEM texto sobreposto, SEM elemento gráfico extra — é a foto \\'limpa\\' de catálogo. Não adicionar acessório, marca ou função inexistente. Quadrado 1:1.',\n    is_cover: true\n  },\n  {\n    nome: '2-problema-que-resolve',\n    regras_fixas: 'Cena publicitária quadrada que comunica visualmente O PROBLEMA/A DOR que esse produto resolve (ex: dificuldade, esforço, incômodo do dia a dia relacionado à categoria do produto) — SEM o produto em cena, ou com o produto discretamente à margem. Incluir um texto curto ON-IMAGE (título de 3-6 palavras) nomeando o problema, de forma honesta e baseada só no que é plausível pra essa categoria de produto (não inventar estatística, nem alegar um problema que o produto não resolve de fato). Tom visual de campanha, iluminação profissional. Texto em português correto, sem erro de ortografia. Quadrado 1:1.'\n  },\n  {\n    nome: '3-beneficios-principais',\n    regras_fixas: 'Cartaz de benefícios quadrado, título grande de impacto no topo. Abaixo, 3-4 blocos com ícone line-icon + frase curta QUALITATIVA descrevendo um benefício real do produto (nunca número/medida/certificação inventada) — ESSE TEXTO PRECISA ESTAR ESCRITO NA IMAGEM, grande e legível, não só sugerido visualmente. Produto em destaque visual (grande, bem iluminado). Paleta coerente com a categoria. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '4-como-funciona',\n    regras_fixas: 'Infográfico técnico premium quadrado, mostrando o produto sendo usado corretamente. EXATAMENTE 3 colunas verticais isoladas (sem nenhum elemento cruzando entre colunas), numeradas 01/02/03, cada uma com no máximo 1 mão humana interagindo com o produto. Título \\'COMO FUNCIONA\\' sem acento, grande, ON-IMAGE. Uma palavra curta em caixa alta abaixo de cada coluna (sem acentuação, ortografia revisada). Mãos adultas realistas, sem deformação. Não inventar peças/funções. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '5-detalhes-premium',\n    regras_fixas: 'Still de close-up/macro quadrado, mostrando com riqueza de detalhe o acabamento, material e textura REAIS do produto (zoom em uma parte específica visível na foto de referência — nunca inventar um detalhe que não está lá). 2-3 linhas de chamada finas apontando pra características visíveis, com rótulo curto e QUALITATIVO ESCRITO NA IMAGEM (ex: \\'acabamento resistente\\', \\'encaixe preciso\\') — nunca número/medida/certificação inventada. Iluminação de estúdio, fundo neutro. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '6-pessoa-real-usando',\n    regras_fixas: 'Fotografia publicitária realista de uma pessoa real (adulta, anatomicamente correta, mãos sem deformação) usando o produto em sua função real, ambiente coerente com a categoria, luz natural, enquadramento fechado na interação pessoa-produto. Não inventar peça ou função. Sem texto sobreposto nesta cena (o objetivo aqui é transmitir confiança/realismo, não informação escrita). Quadrado 1:1.'\n  },\n  {\n    nome: '7-comparacao-antes-depois',\n    regras_fixas: 'Imagem quadrada dividida em 2 metades lado a lado (SEM sobreposição entre as metades). Lado esquerdo: cenário representando a dificuldade/situação SEM o produto (rotulado \\'ANTES\\' ou \\'SEM\\', em português, ON-IMAGE, texto pequeno e discreto). Lado direito: mesma situação já resolvida COM o produto em uso (rotulado \\'DEPOIS\\' ou \\'COM\\'). NÃO alegar percentuais, tempo economizado ou qualquer resultado quantificado — é uma comparação qualitativa de situação, não uma alegação de performance mensurável. Linha divisória nítida entre os dois lados. Texto em português correto. Quadrado 1:1.'\n  },\n  {\n    nome: '8-medidas-reais',\n    regras_fixas: 'Imagem quadrada de referência de tamanho do produto. SE E SOMENTE SE a descrição do produto fornecida abaixo contiver uma medida/dimensão real confirmada, mostrar um diagrama com linhas de medida e ESSE NÚMERO REAL escrito ON-IMAGE. SE NÃO houver medida real confirmada na descrição, NÃO INVENTAR NENHUM NÚMERO — em vez disso, gerar uma \\'referência de escala visual\\': o produto posicionado ao lado de um objeto cotidiano comum e reconhecível (ex: uma mão humana, um celular, uma moeda — escolha o que for proporcionalmente coerente com o tamanho provável da categoria do produto), sem nenhum número impresso, só a comparação visual de tamanho. Fundo neutro, iluminação de estúdio. Texto em português correto (se houver). Quadrado 1:1.'\n  }\n];\n\nconst promptsPorNome = $('gerar-prompts-gpt').first().json.prompts;\nconst fotoConvertida = $('converter-foto-base64').first().json;\nconst fotoBase64 = fotoConvertida.foto_base64;\nconst fotoMime = fotoConvertida.foto_mime;\nconst listingId = $('preparar-para-imagens').first().json.listing_id;\n\nif (!fotoBase64) {\n  throw new Error('converter-foto-base64 não devolveu foto_base64 — confira se esse node está antes de montar-itens-cenas na execução.');\n}\n\nreturn ESQUELETOS_CENAS.map(esqueleto => {\n  const promptFinal = promptsPorNome[esqueleto.nome];\n  if (!promptFinal) {\n    throw new Error(`GPT não devolveu prompt para a cena \"${esqueleto.nome}\"`);\n  }\n  const promptCompleto = `Usando a imagem de referência do produto anexada, gere uma nova foto do MESMO produto exato (preserve rigorosamente cor, formato, proporções, rótulos e texturas reais do objeto — não invente detalhes que o produto não tem). ${promptFinal}`;\n  return {\n    json: {\n      scene: esqueleto.nome,\n      is_cover: !!esqueleto.is_cover,\n      listing_id: listingId,\n      prompt_completo: promptCompleto,\n      foto_base64: fotoBase64,\n      foto_mime: fotoMime\n    },\n    pairedItem: { item: 0 }\n  };\n});"
       },
       "id": "f0689005-2683-4be2-845e-a78f31e9982a",
       "name": "montar-itens-cenas",
@@ -1175,7 +1255,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// =====================================================================\n// extrair-imagem-cena — transforma as 8 respostas JSON do Gemini nos 8\n// items binários que o upload pro Storage espera.\n// =====================================================================\n//\n// Só manipula JSON e devolve binário no formato nativo do n8n (string\n// base64 em `data`) — não faz chamada HTTP e não monta Buffer, então não\n// esbarra em nenhuma das limitações do Task Runner.\n//\n// O casamento com a cena é POR ÍNDICE contra montar-itens-cenas: o node de\n// geração roda um request por item, na ordem, e está com \"Continue On Fail\"\n// desligado, então ou vêm as 8 respostas na mesma ordem ou a execução para\n// antes de chegar aqui. A checagem de contagem abaixo garante isso.\n\nconst cenas = $('montar-itens-cenas').all();\nconst respostas = $input.all();\n\nif (respostas.length !== cenas.length) {\n  throw new Error(\n    `Esperava ${cenas.length} respostas do Gemini, recebi ${respostas.length}.`\n  );\n}\n\nreturn respostas.map((item, i) => {\n  const meta = cenas[i].json;\n  const resposta = item.json;\n\n  const partes = resposta?.candidates?.[0]?.content?.parts ?? [];\n  const parteImagem = partes.find(p => p.inlineData || p.inline_data);\n  const inline = parteImagem?.inlineData ?? parteImagem?.inline_data;\n\n  if (!inline) {\n    throw new Error(\n      `Gemini não retornou imagem para a cena \"${meta.scene}\": ${JSON.stringify(resposta).slice(0, 500)}`\n    );\n  }\n\n  return {\n    json: { scene: meta.scene, is_cover: meta.is_cover },\n    binary: {\n      imagem: {\n        data: inline.data,\n        mimeType: inline.mimeType ?? inline.mime_type ?? 'image/png',\n        fileName: `${meta.scene}.png`\n      }\n    },\n    pairedItem: { item: i }\n  };\n});\n"
+        "jsCode": "// =====================================================================\n// extrair-imagem-cena — transforma as respostas JSON do Gemini nos items\n// binários que o upload pro Storage espera. Compartilhado por 2 fluxos:\n// geração original (8 cenas, vindas de montar-itens-cenas) e regeneração\n// de 1 imagem (botão 🔄 Refazer imagem, vinda de montar-item-cena-regeneracao)\n// — só um dos dois roda em cada execução, nunca os dois.\n// =====================================================================\n//\n// Só manipula JSON e devolve binário no formato nativo do n8n (string\n// base64 em `data`) — não faz chamada HTTP e não monta Buffer, então não\n// esbarra em nenhuma das limitações do Task Runner.\n//\n// O casamento com a cena é POR ÍNDICE contra a origem (8 ou 1 item): o node\n// de geração roda um request por item, na ordem, e está com \"Continue On\n// Fail\" desligado, então ou vêm as respostas na mesma ordem ou a execução\n// para antes de chegar aqui. A checagem de contagem abaixo garante isso.\n\nfunction tentarPegar(nomeDoNode) {\n  try {\n    return $(nomeDoNode).all();\n  } catch (e) {\n    return [];\n  }\n}\n\nconst cenasRegeneracao = tentarPegar('montar-item-cena-regeneracao');\nconst ehRegeneracao = cenasRegeneracao.length > 0;\nconst cenas = ehRegeneracao ? cenasRegeneracao : $('montar-itens-cenas').all();\nconst respostas = $input.all();\n\nif (respostas.length !== cenas.length) {\n  throw new Error(\n    `Esperava ${cenas.length} respostas do Gemini, recebi ${respostas.length}.`\n  );\n}\n\nreturn respostas.map((item, i) => {\n  const meta = cenas[i].json;\n  const resposta = item.json;\n\n  const partes = resposta?.candidates?.[0]?.content?.parts ?? [];\n  const parteImagem = partes.find(p => p.inlineData || p.inline_data);\n  const inline = parteImagem?.inlineData ?? parteImagem?.inline_data;\n\n  if (!inline) {\n    throw new Error(\n      `Gemini não retornou imagem para a cena \"${meta.scene}\": ${JSON.stringify(resposta).slice(0, 500)}`\n    );\n  }\n\n  return {\n    json: { scene: meta.scene, is_cover: meta.is_cover, listing_id: meta.listing_id, is_regeneracao: ehRegeneracao },\n    binary: {\n      imagem: {\n        data: inline.data,\n        mimeType: inline.mimeType ?? inline.mime_type ?? 'image/png',\n        fileName: `${meta.scene}.png`\n      }\n    },\n    pairedItem: { item: i }\n  };\n});\n"
       },
       "id": "8a615989-10dc-4ac8-bffd-815b078dfd60",
       "name": "extrair-imagem-cena",
@@ -1186,12 +1266,12 @@
         3408
       ],
       "notesInFlow": true,
-      "notes": "Saida identica a do antigo gerar-8-fotos-customizadas (json.scene/is_cover + binary.imagem), entao upload-fotos-storage e montar-lista-fotos-storage continuam iguais."
+      "notes": "listing_id e is_regeneracao são novos (feature de refazer 1 imagem): upload-fotos-storage usa listing_id (em vez de $('preparar-para-imagens')) pra funcionar nos dois fluxos, e o IF logo depois do upload usa is_regeneracao (via paired item) pra decidir se agrega as 8 fotos ou manda só a 1 de volta."
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.SUPABASE_URL }}/storage/v1/object/{{ $env.SUPABASE_STORAGE_BUCKET || 'listing-photos' }}/{{ $('preparar-para-imagens').first().json.listing_id }}/{{ $json.scene }}.png",
+        "url": "={{ $env.SUPABASE_URL }}/storage/v1/object/{{ $env.SUPABASE_STORAGE_BUCKET || 'listing-photos' }}/{{ $json.listing_id }}/{{ $json.scene }}.png",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -1228,6 +1308,80 @@
       ],
       "notesInFlow": true,
       "notes": "Roda 1x por item automaticamente (8 items vindos de extrair-imagem-cena) - nao precisa de Promise.all manual. HTTP Request nativo com Body Content Type = n8n Binary File: le binary.imagem direto, sem Buffer, que e o que quebrava dentro do Code node com Task Runners."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-eh-regeneracao",
+              "leftValue": "={{ $('extrair-imagem-cena').item.json.is_regeneracao }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "3c7d6f2e-9a1b-4c5d-8e6f-0a1b2c3d4e5f",
+      "name": "verificar-regeneracao-foto",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5128,
+        3568
+      ],
+      "notesInFlow": true,
+      "notes": "Distingue as 2 execuções que passam por upload-fotos-storage (node compartilhado): regeneração de 1 imagem (→ enviar-foto-regenerada) ou geração original das 8 (→ segue pro fluxo de sempre, montar-lista-fotos-storage). is_regeneracao vem de extrair-imagem-cena, lido via paired item — upload-fotos-storage não preserva o json de entrada, só a resposta do Supabase."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('parse-mensagem').first().json.phone_number_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"image\",\n  \"image\": { \"link\": \"{{ $env.SUPABASE_URL }}/storage/v1/object/public/{{ $env.SUPABASE_STORAGE_BUCKET || 'listing-photos' }}/{{ $('extrair-imagem-cena').item.json.listing_id }}/{{ $('extrair-imagem-cena').item.json.scene }}.png\" }\n}",
+        "options": {}
+      },
+      "id": "5d8e7f4a-2b3c-4d5e-9f6a-7b8c9d0e1f2a",
+      "name": "enviar-foto-regenerada",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5368,
+        3488
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      },
+      "notes": "Reenvia a mesma URL pública de sempre — upload-fotos-storage já sobrescreveu o arquivo (x-upsert: true), então o conteúdo mudou mas o caminho não. Não atualiza listings.generated_photos: a URL não muda."
     },
     {
       "parameters": {
@@ -1566,7 +1720,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"interactive\",\n  \"interactive\": {\n    \"type\": \"button\",\n    \"body\": { \"text\": \"O que você quer fazer com esse anúncio?\" },\n    \"action\": {\n      \"buttons\": [\n        { \"type\": \"reply\", \"reply\": { \"id\": \"aprovar\", \"title\": \"Aprovar\" } },\n        { \"type\": \"reply\", \"reply\": { \"id\": \"gerar_novamente\", \"title\": \"Gerar de novo\" } },\n        { \"type\": \"reply\", \"reply\": { \"id\": \"editar\", \"title\": \"Editar manualmente\" } }\n      ]\n    }\n  }\n}",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"interactive\",\n  \"interactive\": {\n    \"type\": \"button\",\n    \"body\": { \"text\": \"Não gostou de alguma imagem? Toque pra refazer, sem custo.\" },\n    \"action\": {\n      \"buttons\": [\n        { \"type\": \"reply\", \"reply\": { \"id\": \"abrir_refazer_imagem\", \"title\": \"🔄 Refazer imagem\" } }\n      ]\n    }\n  }\n}",
         "options": {}
       },
       "id": "602cf077-c1de-4249-aaf4-7f6e390c508b",
@@ -1584,7 +1738,7 @@
           "name": "WhatsApp account"
         }
       },
-      "notes": "O node nativo WhatsApp Business Cloud do N8N não suporta mensagens interativas (Reply Buttons) — por isso é HTTP Request direto pra Graph API."
+      "notes": "O node nativo WhatsApp Business Cloud do N8N não suporta mensagens interativas (Reply Buttons) — por isso é HTTP Request direto pra Graph API. \"Aprovar\" e \"Editar manualmente\" saíram dessa tela e vivem no 📋 Menu global (menu_aprovar/menu_editar_embreve); \"Gerar de novo\" (as 8 de uma vez) foi removido — refazer imagem por imagem (botão abrir_refazer_imagem, tratado em rotear-comando-global) substitui esse caso de uso."
     },
     {
       "parameters": {
@@ -1613,101 +1767,6 @@
     },
     {
       "parameters": {
-        "rules": {
-          "values": [
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "loose",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "id": "cond-botao-aprovar",
-                    "leftValue": "={{ $('parse-mensagem').first().json.botao_id }}",
-                    "rightValue": "aprovar",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "aprovar"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "loose",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "id": "cond-botao-gerar-novamente",
-                    "leftValue": "={{ $('parse-mensagem').first().json.botao_id }}",
-                    "rightValue": "gerar_novamente",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "gerar_novamente"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "loose",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "id": "cond-botao-editar",
-                    "leftValue": "={{ $('parse-mensagem').first().json.botao_id }}",
-                    "rightValue": "editar",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "editar"
-            }
-          ]
-        },
-        "looseTypeValidation": true,
-        "options": {
-          "fallbackOutput": "extra",
-          "renameFallbackOutput": "nao_e_botao"
-        }
-      },
-      "id": "026da38b-3c08-4b03-b21b-81b2fcd04637",
-      "name": "rotear-botao-aprovacao",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3.2,
-      "position": [
-        704,
-        4128
-      ],
-      "notesInFlow": true,
-      "notes": "botao_id vem do parse-mensagem (extraído do interactive.button_reply.id). Mensagem que não é resposta de botão cai no fallback nao_e_botao."
-    },
-    {
-      "parameters": {
         "operation": "executeQuery",
         "query": "UPDATE sellers\nSET conversation_state = 'aguardando_oauth_ml',\n    updated_at = now()\nWHERE id = $1;",
         "options": {
@@ -1731,83 +1790,47 @@
     },
     {
       "parameters": {
-        "operation": "send",
-        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
-        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
-        "textBody": "Aprovado! ✅ A publicação no Mercado Livre ainda não está implementada nesta fase do desenvolvimento — isso é o próximo bloco.",
-        "additionalFields": {}
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('parse-mensagem').first().json.phone_number_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"interactive\",\n  \"interactive\": {\n    \"type\": \"button\",\n    \"body\": { \"text\": \"✅ Anúncio pronto!\\n\\nEu consigo publicar automaticamente na sua conta do Mercado Livre. Quer configurar agora?\" },\n    \"action\": {\n      \"buttons\": [\n        { \"type\": \"reply\", \"reply\": { \"id\": \"menu_ml_embreve\", \"title\": \"Conectar ML\" } }\n      ]\n    }\n  }\n}",
+        "options": {}
       },
       "id": "e8d4f292-dc77-4c69-baee-b32456d907b6",
       "name": "resp-aprovar",
-      "type": "n8n-nodes-base.whatsApp",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         1184,
         3968
       ],
-      "webhookId": "b6332f7c-280b-480a-af89-d8c6ffcdb477",
-      "credentials": {
-        "whatsAppApi": {
-          "id": "nF8Mr23mvtzmHNHw",
-          "name": "WhatsApp account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT id, generated_title, generated_description, original_photo_url\nFROM listings\nWHERE id = $1;",
-        "options": {
-          "queryReplacement": "={{ [$('buscar-vendedor').first().json.conversation_context.listing_id] }}"
-        }
-      },
-      "id": "aeea1d3a-e41e-46f6-94a1-921c77290401",
-      "name": "buscar-listing-para-regeneracao",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.5,
-      "position": [
-        944,
-        4128
-      ],
       "notesInFlow": true,
       "credentials": {
-        "postgres": {
-          "id": "CfixA4paTsJ2EoQK",
-          "name": "Postgres account"
-        }
-      },
-      "notes": "Título/descrição NÃO são regerados em \"gerar de novo\" — só as 8 fotos. Por isso lê o que já existe em vez de gerar de novo."
-    },
-    {
-      "parameters": {
-        "operation": "send",
-        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
-        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
-        "textBody": "Edição manual do título/descrição ainda não está implementada nesta fase do desenvolvimento.",
-        "additionalFields": {}
-      },
-      "id": "a737da21-f55e-4c5f-8607-384dea83fbfe",
-      "name": "resp-editar",
-      "type": "n8n-nodes-base.whatsApp",
-      "typeVersion": 1,
-      "position": [
-        944,
-        4288
-      ],
-      "webhookId": "1d10b9d7-44af-40c6-97ba-656d04a09437",
-      "credentials": {
         "whatsAppApi": {
           "id": "nF8Mr23mvtzmHNHw",
           "name": "WhatsApp account"
         }
-      }
+      },
+      "notes": "O node nativo WhatsApp Business Cloud do N8N não suporta mensagens interativas (Reply Buttons) — por isso é HTTP Request direto pra Graph API (mesmo padrão de enviar-botoes-aprovacao). Botão 'Conectar ML' usa o mesmo id (menu_ml_embreve) do item de menu — cai no em_breve já existente, sem precisar de rota nova."
     },
     {
       "parameters": {
         "operation": "send",
         "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
         "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
-        "textBody": "Usa um dos botões da mensagem anterior (Aprovar / Gerar de novo / Editar manualmente) pra eu continuar 🙂",
+        "textBody": "Toque no botão \"🔄 Refazer imagem\" da mensagem anterior pra trocar uma foto, ou digite *menu* pra aprovar o anúncio ou ver outras opções 🙂",
         "additionalFields": {}
       },
       "id": "7864fe98-55f9-46be-a231-77a2be1d1851",
@@ -1828,7 +1851,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst mimeType = $input.first().binary.data.mimeType || 'image/jpeg';\n\nreturn [{\n  json: {\n    ...$input.first().json,\n    foto_base64: buffer.toString('base64'),\n    foto_mime: mimeType\n  }\n}];"
+        "jsCode": "// Compartilhado por 2 fluxos (geração original das 8 fotos e regeneração de\n// 1 imagem) — is_regeneracao marca qual dos dois é, pra verificar-modo-geracao\n// decidir se chama gerar-prompts-gpt (GPT) de novo ou pula direto pra\n// buscar-scene-prompt (reaproveita o prompt já salvo, sem chamar o GPT).\nlet ehRegeneracao = false;\ntry {\n  ehRegeneracao = $('preparar-regeneracao').all().length > 0;\n} catch (e) {\n  ehRegeneracao = false;\n}\n\nconst buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst mimeType = $input.first().binary.data.mimeType || 'image/jpeg';\n\nreturn [{\n  json: {\n    ...$input.first().json,\n    foto_base64: buffer.toString('base64'),\n    foto_mime: mimeType,\n    is_regeneracao: ehRegeneracao\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -1838,6 +1861,43 @@
       ],
       "id": "f2ef875b-bedb-47bf-ac0c-db9c635a4caa",
       "name": "converter-foto-base64"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-modo-regeneracao",
+              "leftValue": "={{ $json.is_regeneracao }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "1e2f3a4b-5c6d-4f70-8a9b-1c2d3e4f5a6b",
+      "name": "verificar-modo-geracao",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3928,
+        3528
+      ],
+      "notesInFlow": true,
+      "notes": "Regeneração de 1 imagem pula gerar-prompts-gpt (GPT) e vai direto pro prompt já salvo em buscar-scene-prompt — é o ponto que garante que refazer 1 imagem nunca rechama a OpenAI."
     },
     {
       "parameters": {
@@ -1917,7 +1977,7 @@
         "operation": "send",
         "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
         "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
-        "textBody": "=Prazer, {{ $json.name }}! 🎁 Você ganhou 400 créditos grátis — dá pra 2 anúncios completos (cada anúncio usa 150 créditos, ainda sobra um restinho)!\n\nAqui é assim: você me manda uma foto do produto, eu pesquiso informações reais sobre ele, e gero um anúncio completo — título, descrição e 8 fotos profissionais — em poucos minutos.\n\nAgora me manda uma foto do produto que você quer anunciar.",
+        "textBody": "=Prazer, {{ $json.name }}! 🎁 Você ganhou 400 créditos grátis — dá pra 2 anúncios completos (cada anúncio usa 150 créditos, ainda sobra um restinho)!\n\nAqui é assim: você me manda uma foto do produto, eu pesquiso informações reais sobre ele, e gero um anúncio completo — título, descrição e 8 fotos profissionais — em poucos minutos.\n\nAgora me manda uma foto do produto que você quer anunciar.\n\nA qualquer momento, digite *menu* para ver outras opções.",
         "additionalFields": {}
       },
       "id": "d9000000-0000-4000-8000-000000000004",
@@ -2046,9 +2106,18 @@
                       "type": "string",
                       "operation": "equals"
                     }
+                  },
+                  {
+                    "id": "cmd-menu-botao",
+                    "leftValue": "={{ $('parse-mensagem').first().json.botao_id }}",
+                    "rightValue": "abrir_menu",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
                   }
                 ],
-                "combinator": "and"
+                "combinator": "or"
               },
               "renameOutput": true,
               "outputKey": "menu"
@@ -2136,12 +2205,120 @@
                       "type": "string",
                       "operation": "equals"
                     }
+                  },
+                  {
+                    "id": "cmd-creditos-botao",
+                    "leftValue": "={{ $('parse-mensagem').first().json.botao_id }}",
+                    "rightValue": "menu_creditos_embreve",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "id": "cmd-ml-botao",
+                    "leftValue": "={{ $('parse-mensagem').first().json.botao_id }}",
+                    "rightValue": "menu_ml_embreve",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "id": "cmd-personalizacao-botao",
+                    "leftValue": "={{ $('parse-mensagem').first().json.botao_id }}",
+                    "rightValue": "menu_personalizacao_embreve",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "id": "cmd-editar",
+                    "leftValue": "={{ $('parse-mensagem').first().json.lista_id }}",
+                    "rightValue": "menu_editar_embreve",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
                   }
                 ],
                 "combinator": "or"
               },
               "renameOutput": true,
               "outputKey": "em_breve"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cmd-abrir-refazer-imagem",
+                    "leftValue": "={{ $('parse-mensagem').first().json.botao_id }}",
+                    "rightValue": "abrir_refazer_imagem",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "abrir_refazer_imagem"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cmd-refazer-imagem",
+                    "leftValue": "={{ $('parse-mensagem').first().json.lista_id }}",
+                    "rightValue": "refazer_",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "refazer_imagem"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cmd-aprovar",
+                    "leftValue": "={{ $('parse-mensagem').first().json.lista_id }}",
+                    "rightValue": "menu_aprovar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "aprovar"
             }
           ]
         },
@@ -2179,7 +2356,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"interactive\",\n  \"interactive\": {\n    \"type\": \"list\",\n    \"header\": { \"type\": \"text\", \"text\": \"Menu\" },\n    \"body\": { \"text\": \"O que você quer fazer?\" },\n    \"action\": {\n      \"button\": \"Ver opções\",\n      \"sections\": [\n        {\n          \"title\": \"Conta\",\n          \"rows\": [\n            { \"id\": \"menu_recomecar\", \"title\": \"🔄 Novo Anúncio\", \"description\": \"Cancela o anúncio atual e começa um novo\" },\n            { \"id\": \"menu_como_funciona\", \"title\": \"ℹ️ Como funciona\", \"description\": \"Veja o passo a passo do SellerUp\" }\n          ]\n        },\n        {\n          \"title\": \"Em breve\",\n          \"rows\": [\n            { \"id\": \"menu_creditos_embreve\", \"title\": \"💳 Créditos e pacotes\", \"description\": \"Em breve\" },\n            { \"id\": \"menu_ml_embreve\", \"title\": \"🛒 Publicar no ML\", \"description\": \"Publicar direto no Mercado Livre — em breve\" },\n            { \"id\": \"menu_personalizacao_embreve\", \"title\": \"🎨 Personalização\", \"description\": \"Em breve\" }\n          ]\n        }\n      ]\n    }\n  }\n}",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"interactive\",\n  \"interactive\": {\n    \"type\": \"list\",\n    \"header\": { \"type\": \"text\", \"text\": \"Menu\" },\n    \"body\": { \"text\": \"O que você quer fazer?\" },\n    \"action\": {\n      \"button\": \"Ver opções\",\n      \"sections\": [\n        {\n          \"title\": \"Conta\",\n          \"rows\": [\n            { \"id\": \"menu_recomecar\", \"title\": \"🔄 Novo Anúncio\", \"description\": \"Cancela o anúncio atual e começa um novo\" },\n            { \"id\": \"menu_como_funciona\", \"title\": \"ℹ️ Como funciona\", \"description\": \"Veja o passo a passo do SellerUp\" },\n            { \"id\": \"menu_aprovar\", \"title\": \"✅ Aprovar anúncio\", \"description\": \"Aprova o anúncio atual\" }\n          ]\n        },\n        {\n          \"title\": \"Em breve\",\n          \"rows\": [\n            { \"id\": \"menu_creditos_embreve\", \"title\": \"💳 Créditos e pacotes\", \"description\": \"Em breve\" },\n            { \"id\": \"menu_ml_embreve\", \"title\": \"🛒 Publicar no ML\", \"description\": \"Publicar direto no Mercado Livre — em breve\" },\n            { \"id\": \"menu_personalizacao_embreve\", \"title\": \"🎨 Personalização\", \"description\": \"Em breve\" },\n            { \"id\": \"menu_editar_embreve\", \"title\": \"✏️ Editar manualmente\", \"description\": \"Em breve\" }\n          ]\n        }\n      ]\n    }\n  }\n}",
         "options": {}
       },
       "id": "e1000000-0000-4000-8000-000000000003",
@@ -2292,6 +2469,139 @@
           "name": "WhatsApp account"
         }
       }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('parse-mensagem').first().json.phone_number_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"interactive\",\n  \"interactive\": {\n    \"type\": \"button\",\n    \"body\": { \"text\": \"Podemos te ajudar com mais alguma coisa? 😊\" },\n    \"action\": {\n      \"buttons\": [\n        { \"type\": \"reply\", \"reply\": { \"id\": \"abrir_menu\", \"title\": \"📋 Menu\" } }\n      ]\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "e1000000-0000-4000-8000-000000000008",
+      "name": "resp-oferecer-menu",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -40,
+        3712
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      },
+      "notes": "Botão tocável de menu, mandado logo depois de qualquer resposta 'em breve' (créditos/ML/personalização, todos convergem em resp-em-breve). id abrir_menu tratado no rotear-comando-global, mesma rota do comando digitado 'menu'."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('parse-mensagem').first().json.phone_number_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $('parse-mensagem').first().json.numero_remetente_raw }}\",\n  \"type\": \"interactive\",\n  \"interactive\": {\n    \"type\": \"list\",\n    \"header\": { \"type\": \"text\", \"text\": \"Escolher imagem\" },\n    \"body\": { \"text\": \"Qual imagem você quer refazer?\" },\n    \"action\": {\n      \"button\": \"Ver imagens\",\n      \"sections\": [\n        {\n          \"title\": \"Imagens\",\n          \"rows\": [\n            { \"id\": \"refazer_1\", \"title\": \"Imagem 1\", \"description\": \"Toque pra refazer essa imagem\" },\n            { \"id\": \"refazer_2\", \"title\": \"Imagem 2\", \"description\": \"Toque pra refazer essa imagem\" },\n            { \"id\": \"refazer_3\", \"title\": \"Imagem 3\", \"description\": \"Toque pra refazer essa imagem\" },\n            { \"id\": \"refazer_4\", \"title\": \"Imagem 4\", \"description\": \"Toque pra refazer essa imagem\" },\n            { \"id\": \"refazer_5\", \"title\": \"Imagem 5\", \"description\": \"Toque pra refazer essa imagem\" },\n            { \"id\": \"refazer_6\", \"title\": \"Imagem 6\", \"description\": \"Toque pra refazer essa imagem\" },\n            { \"id\": \"refazer_7\", \"title\": \"Imagem 7\", \"description\": \"Toque pra refazer essa imagem\" },\n            { \"id\": \"refazer_8\", \"title\": \"Imagem 8\", \"description\": \"Toque pra refazer essa imagem\" }\n          ]\n        }\n      ]\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-e5f6-4708-9a0b-1c2d3e4f5a6b",
+      "name": "enviar-lista-refazer-imagem",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -40,
+        3872
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      },
+      "notes": "Aberta pelo botão 🔄 Refazer imagem (abrir_refazer_imagem, tratado em rotear-comando-global). 8 linhas, dentro do limite de 10 da Meta. A escolha (refazer_1..refazer_8) é tratada por outra condição do mesmo rotear-comando-global (prefixo refazer_), que leva a preparar-regeneracao."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-aguardando-aprovacao",
+              "leftValue": "={{ $('buscar-vendedor').first().json.conversation_state }}",
+              "rightValue": "aguardando_aprovacao",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "b2c3d4e5-f607-4819-ab1c-2d3e4f5a6b7c",
+      "name": "verificar-estado-aprovacao",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -40,
+        4032
+      ],
+      "notesInFlow": true,
+      "notes": "Guarda do item de menu \"✅ Aprovar anúncio\" (menu_aprovar) — é global, pode ser tocado em QUALQUER estado, inclusive por quem nunca gerou um anúncio. Só roda o fluxo de aprovação (atualizar-estado-oauth → resp-aprovar) se o vendedor realmente está em aguardando_aprovacao; senão avisa que não há anúncio pronto."
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $('parse-mensagem').first().json.phone_number_id }}",
+        "recipientPhoneNumber": "={{ $('parse-mensagem').first().json.numero_remetente_raw }}",
+        "textBody": "Você ainda não tem um anúncio pronto pra aprovar. Me manda uma foto pra começar! 📸",
+        "additionalFields": {}
+      },
+      "id": "c3d4e5f6-0718-492a-bc1d-2e3f4a5b6c7d",
+      "name": "resp-sem-anuncio-pronto",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        200,
+        4112
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "nF8Mr23mvtzmHNHw",
+          "name": "WhatsApp account"
+        }
+      }
     }
   ],
   "pinData": {},
@@ -2365,7 +2675,7 @@
         ],
         [
           {
-            "node": "rotear-botao-aprovacao",
+            "node": "resp-usar-botoes",
             "type": "main",
             "index": 0
           }
@@ -2662,17 +2972,6 @@
         ]
       ]
     },
-    "buscar-listing-para-regeneracao": {
-      "main": [
-        [
-          {
-            "node": "preparar-para-imagens",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "preparar-para-imagens": {
       "main": [
         [
@@ -2696,6 +2995,17 @@
       ]
     },
     "gerar-prompts-gpt": {
+      "main": [
+        [
+          {
+            "node": "salvar-scene-prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "salvar-scene-prompts": {
       "main": [
         [
           {
@@ -2816,38 +3126,6 @@
         ]
       ]
     },
-    "rotear-botao-aprovacao": {
-      "main": [
-        [
-          {
-            "node": "atualizar-estado-oauth",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "buscar-listing-para-regeneracao",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "resp-editar",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "resp-usar-botoes",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "atualizar-estado-oauth": {
       "main": [
         [
@@ -2885,6 +3163,24 @@
       "main": [
         [
           {
+            "node": "verificar-regeneracao-foto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "verificar-regeneracao-foto": {
+      "main": [
+        [
+          {
+            "node": "enviar-foto-regenerada",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "montar-lista-fotos-storage",
             "type": "main",
             "index": 0
@@ -2904,6 +3200,28 @@
       ]
     },
     "montar-itens-cenas": {
+      "main": [
+        [
+          {
+            "node": "gerar-foto-cena",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "buscar-scene-prompt": {
+      "main": [
+        [
+          {
+            "node": "montar-item-cena-regeneracao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "montar-item-cena-regeneracao": {
       "main": [
         [
           {
@@ -2940,7 +3258,36 @@
       "main": [
         [
           {
+            "node": "verificar-modo-geracao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "verificar-modo-geracao": {
+      "main": [
+        [
+          {
+            "node": "buscar-scene-prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "gerar-prompts-gpt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "preparar-regeneracao": {
+      "main": [
+        [
+          {
+            "node": "baixar-foto-para-gerar",
             "type": "main",
             "index": 0
           }
@@ -3045,6 +3392,27 @@
         ],
         [
           {
+            "node": "enviar-lista-refazer-imagem",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "preparar-regeneracao",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "verificar-estado-aprovacao",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "rotear-por-estado",
             "type": "main",
             "index": 0
@@ -3057,6 +3425,35 @@
         [
           {
             "node": "resp-recomecar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "resp-em-breve": {
+      "main": [
+        [
+          {
+            "node": "resp-oferecer-menu",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "verificar-estado-aprovacao": {
+      "main": [
+        [
+          {
+            "node": "atualizar-estado-oauth",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "resp-sem-anuncio-pronto",
             "type": "main",
             "index": 0
           }
